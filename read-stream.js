@@ -24,8 +24,8 @@ module.exports = function readStream(stream, cb) {
 
   function clean() {
     removeListener('data', onData);
-    removeListener('end', onData);
-    removeListener('error', onData);
+    removeListener('end', onEnd);
+    removeListener('error', onError);
   }
 
   function onData(chunk) {

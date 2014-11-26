@@ -51,15 +51,34 @@ function shuffle(array) {
   }
 }
 
+function parseJson(data) {
+  return JSON.parse(stripJsonComments(String(data)));
+}
+
 //====================================================================
 
 var config;
 
 var sendMail = function initSendMail() {
-  var transport = nodemailer.createTransport(config.mail.transport);
+  var mailConfig = config.mail;
+
+  var transport = nodemailer.createTransport(mailConfig.transport);
   transport.use('compile', nodemailerMarkdown());
 
-  sendMail = Bluebird.promisify(transport.sendMail, transport) ;
+  sendMail = function sendMail(data) {
+    return new Bluebird(function (resolve, reject) {
+      data.from || (data.from = mailConfig.from);
+      data.bcc || (data.bcc = mailConfig.bcc);
+
+      transport.sendMail(data, function (error) {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+  };
 
   return sendMail.apply(this, arguments);
 };
@@ -94,12 +113,10 @@ function normalizePlayers(players) {
   return normalized;
 }
 
-commands.generate = function (args) {
+commands.draw = function (args) {
   return readStream(
     args.length ? createReadStream(args[0]) : process.stdin
-  ).then(function (players) {
-    players = JSON.parse(stripJsonComments(String(players)));
-
+  ).then(parseJson).then(function (players) {
     players = normalizePlayers(players);
     players.sort(function (p1, p2) {
       return p1.blacklist.length - p2.blacklist.length;
@@ -114,8 +131,12 @@ commands.generate = function (args) {
 
 //--------------------------------------------------------------------
 
-commands.sendMail = function () {
-  throw new Error('not implemented');
+commands.mail = function (args) {
+  return readStream(
+    args.length ? createReadStream(args[0]) : process.stdin
+  ).then(parseJson).then(function (players) {
+    throw new Error('not implemented');
+  });
 };
 
 //--------------------------------------------------------------------
