@@ -1,12 +1,14 @@
 import assign from 'lodash.assign'
 import forEach from 'lodash.foreach'
 import frontMatter from 'front-matter'
+import isArray from 'lodash.isarray'
 import isFunction from 'lodash.isfunction'
 import isString from 'lodash.isstring'
 import nodemailer from 'nodemailer'
 import nodemailerStubTransport from 'nodemailer-stub-transport'
 import pify from 'pify'
 import { compile as handlebars } from 'handlebars'
+import { parse as parseJson } from 'json5'
 
 // ===================================================================
 
@@ -15,7 +17,7 @@ function compileRecursively (template) {
     return handlebars(template)
   }
 
-  return template::map(compileRecursively, null, template)
+  return mapInPlace(template, compileRecursively)
 }
 
 function evaluateRecursively (value) {
@@ -23,7 +25,7 @@ function evaluateRecursively (value) {
     return value
   }
 
-  return value::map(evaluateRecursively, this)
+  return map(value, evaluateRecursively, this)
 }
 
 // Compiles a Handlebars email template with a front matter.
@@ -45,7 +47,10 @@ export function compileMailTemplate (source) {
 
 // -------------------------------------------------------------------
 
-const sendMailStub = promisify(::nodemailerStubTransport().sendMail)
+const sendMailStub = promisify((() => {
+  const transport = nodemailer.createTransport(nodemailerStubTransport())
+  return ::transport.sendMail
+})())
 
 export function createMailer (config) {
   const sendMail = promisify(
@@ -77,11 +82,11 @@ export function extractProperty (obj, prop) {
 // Special value which can be returned to stop an iteration in map().
 export const DONE = {}
 
-// Fill `target` by running each element in `this` through
+// Fill `target` by running each element in `collection` through
 // `iteratee`.
 //
 // If `target` is undefined, it defaults to a new array if
-// `this` is array-like (has a `length` property), otherwise an
+// `collection` is array-like (has a `length` property), otherwise an
 // object.
 //
 // The context of `iteratee` can be specified via `thisArg`.
@@ -91,12 +96,13 @@ export const DONE = {}
 //
 // Usage: collection::map(item => item + 1)
 export function map (
+  collection,
   iteratee,
   thisArg,
-  target = 'length' in this ? [] : {}
+  target = 'length' in collection ? [] : {}
 ) {
-  forEach(this, (item, i) => {
-    const value = iteratee.call(thisArg, item, i, this, DONE)
+  forEach(collection, (item, i) => {
+    const value = iteratee.call(thisArg, item, i, collection, DONE)
     if (value === DONE) {
       return false
     }
@@ -107,14 +113,49 @@ export function map (
   return target
 }
 
+export const mapInPlace = (
+  collection,
+  iteratee,
+  thisArg
+) => map(collection, iteratee, thisArg, collection)
+
 // -------------------------------------------------------------------
 
 export function parsePlayers (json) {
-  throw new Error('TODO')
+  const data = parseJson(String(json))
+  console.log(data)
+
+  const players = Object.create(null)
+  ;(function loop (player) {
+    if (isArray(player)) {
+      return forEach(player, loop, this)
+    }
+
+    players[player.id] = player
+  }).call(this, data)
+
+  return players
 }
 
 // -------------------------------------------------------------------
 
 export function promisify (fn) {
   return pify(fn, Promise)
+}
+
+// -------------------------------------------------------------------
+
+// Fisher-Yates shuffle.
+// http://bost.ocks.org/mike/shuffle/
+export function shuffleArray (array) {
+  let n = array.length
+  let i, tmp
+
+  while (n) {
+    i = Math.floor(Math.random() * n--)
+
+    tmp = array[n]
+    array[n] = array[i]
+    array[i] = tmp
+  }
 }

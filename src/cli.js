@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
+import '../.mocha'
+
 import execPromise from 'exec-promise'
 import forEach from 'lodash.foreach'
 import micromatch from 'micromatch'
 import minimist from 'minimist'
-import { load as loadConfig } from 'app-conf'
+// import { load as loadConfig } from 'app-conf'
 import { readFile } from 'fs-promise'
 
 import {
@@ -47,6 +49,12 @@ const COMMANDS = Object.freeze({
     forEach(playerIds, id => {
       console.log(id)
     })
+  },
+
+  async test (args) {
+    const players = parsePlayers(await readFile(args[0]))
+
+    return players
   }
 })
 
@@ -74,7 +82,7 @@ execPromise(async args => {
     return help
   }
 
-  const [ commandName, commandArgs ] = restArgs
+  const [ commandName, ...commandArgs ] = restArgs
 
   if (!commandName) {
     throw new Error('missing <command>')
