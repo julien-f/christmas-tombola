@@ -4,9 +4,9 @@ import '../.mocha'
 
 import execPromise from 'exec-promise'
 import forEach from 'lodash.foreach'
-import micromatch from 'micromatch'
 import minimist from 'minimist'
-// import { load as loadConfig } from 'app-conf'
+import sortBy from 'lodash.sortby'
+import { load as loadConfig } from 'app-conf'
 import { readFile } from 'fs-promise'
 
 import {
@@ -15,6 +15,9 @@ import {
 } from '../package'
 import {
   compileMailTemplate,
+  createGlobMatcher,
+  createMailer,
+  mapToArray,
   parsePlayers
 } from './utils'
 
@@ -26,7 +29,7 @@ const COMMANDS = Object.freeze({
       force: forceFlag = false,
       _: [ playersFile, mailTemplateFile ],
       '--': patterns
-    } = minimist({
+    } = minimist(args, {
       boolean: ['force'],
       alias: {
         force: ['f']
@@ -38,17 +41,30 @@ const COMMANDS = Object.freeze({
       players,
       mailTemplate
     ] = await Promise.all([
-      readFile(playersFile).then(parsePlayers),
-      readFile(mailTemplateFile).then(compileMailTemplate)
+      readFile(playersFile, 'utf8').then(parsePlayers),
+      readFile(mailTemplateFile, 'utf8').then(compileMailTemplate)
     ])
 
-    const playerIds = patterns.length
-      ? micromatch(Object.keys(players), patterns)
-      : Object.keys(players)
+    const sendMail = createMailer(this.config.mail)
+    const isPlayerEnabled = patterns.length
+      ? createGlobMatcher(patterns)
+      : () => true
 
-    forEach(playerIds, id => {
-      console.log(id)
-    })
+    const sortedPlayers = sortBy(players, 'displayName')
+
+    await Promise.all(mapToArray(players, player => {
+      if (!isPlayerEnabled(player.email)) {
+        return
+      }
+
+      return sendMail(mailTemplate({
+        player,
+        players: sortedPlayers
+      }), forceFlag).then(
+        ::console.log,
+        ::console.error
+      )
+    }))
   },
 
   async test (args) {
@@ -69,18 +85,24 @@ ${pkgName} v${pkgVersion}
 execPromise(async args => {
   const {
     help: helpFlag,
-    _: restArgs
+    _: restArgs,
+    '--': restRestArgs
   } = minimist(args, {
     boolean: ['help'],
     alias: {
       help: ['h']
     },
-    stopEarly: true
+    stopEarly: true,
+    '--': true
   })
 
   if (helpFlag) {
     return help
   }
+
+  // Work around https://github.com/substack/minimist/issues/71
+  restArgs.push('--')
+  ;[].push.apply(restArgs, restRestArgs)
 
   const [ commandName, ...commandArgs ] = restArgs
 
@@ -93,5 +115,10 @@ execPromise(async args => {
     throw new Error(`invalid <command>: ${commandName}`)
   }
 
-  return command(commandArgs)
+  return command.call(
+    {
+      config: await loadConfig('christmas-tombola')
+    },
+    commandArgs
+  )
 })

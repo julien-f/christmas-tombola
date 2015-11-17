@@ -1,4 +1,3 @@
-import assign from 'lodash.assign'
 import forEach from 'lodash.foreach'
 import frontMatter from 'front-matter'
 import isArray from 'lodash.isarray'
@@ -8,6 +7,8 @@ import nodemailer from 'nodemailer'
 import nodemailerStubTransport from 'nodemailer-stub-transport'
 import pify from 'pify'
 import { compile as handlebars } from 'handlebars'
+import { markdown as nodemailerMarkdown } from 'nodemailer-markdown'
+import { matcher as createSingleGlobaMatcher } from 'micromatch'
 import { parse as parseJson } from 'json5'
 
 // ===================================================================
@@ -21,8 +22,8 @@ function compileRecursively (template) {
 }
 
 function evaluateRecursively (value) {
-  if (!isFunction(value)) {
-    return value
+  if (isFunction(value)) {
+    return value(this)
   }
 
   return map(value, evaluateRecursively, this)
@@ -42,25 +43,64 @@ export function compileMailTemplate (source) {
 
   compileRecursively(mailTemplate)
 
-  return context => context::evaluate(mailTemplate)
+  return context => context::evaluateRecursively(mailTemplate)
 }
 
 // -------------------------------------------------------------------
 
+export function createGlobMatcher (patterns) {
+  const noneMustMatch = []
+  const anyMustMatch = []
+
+  forEach(patterns, pattern => {
+    if (pattern[0] === '!') {
+      noneMustMatch.push(createSingleGlobaMatcher(pattern.slice(1)))
+    } else {
+      anyMustMatch.push(createSingleGlobaMatcher(pattern))
+    }
+  })
+
+  const n = noneMustMatch.length
+  const m = anyMustMatch.length
+
+  return entry => {
+    for (let i = 0; i < n; ++i) {
+      if (noneMustMatch[i](entry)) {
+        return false
+      }
+    }
+
+    for (let i = 0; i < m; ++i) {
+      if (anyMustMatch[i](entry)) {
+        return true
+      }
+    }
+
+    return false
+  }
+}
+
+// -------------------------------------------------------------------
+
+const markdownCompiler = nodemailerMarkdown({
+  useEmbeddedImages: true
+})
+
 const sendMailStub = promisify((() => {
   const transport = nodemailer.createTransport(nodemailerStubTransport())
+  transport.use('compile', markdownCompiler)
+
   return ::transport.sendMail
 })())
 
-export function createMailer (config) {
-  const sendMail = promisify(
-    ::nodemailer.createTransport(
-      extractProperty(config, 'transport')
-    ).sendMail
-  )
+export function createMailer ({ transport: transportConfig, ...config }) {
+  const transport = nodemailer.createTransport(transportConfig)
+  transport.use('compile', markdownCompiler)
+
+  const sendMail = promisify(::transport.sendMail)
 
   return (data, noTest = false) => {
-    data = assign({}, config, data)
+    data = { ...config, ...data }
 
     return noTest
       ? sendMail(data)
@@ -113,6 +153,25 @@ export function map (
   return target
 }
 
+export function mapToArray (
+  collection,
+  iteratee,
+  thisArg
+) {
+  const target = []
+
+  forEach(collection, (item, i) => {
+    const value = iteratee.call(thisArg, item, i, collection, DONE)
+    if (value === DONE) {
+      return false
+    }
+
+    target.push(value)
+  })
+
+  return target
+}
+
 export const mapInPlace = (
   collection,
   iteratee,
@@ -123,13 +182,16 @@ export const mapInPlace = (
 
 export function parsePlayers (json) {
   const data = parseJson(String(json))
-  console.log(data)
 
-  const players = Object.create(null)
+  const players = {}
   ;(function loop (player) {
     if (isArray(player)) {
       return forEach(player, loop, this)
     }
+
+    player.displayName = player.disambiguation
+      ? `${player.name} (${player.disambiguation})`
+      : player.name
 
     players[player.id] = player
   }).call(this, data)

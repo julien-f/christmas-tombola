@@ -32,6 +32,7 @@
     "lodash.foreach": "^3.0.3",
     "lodash.isarray": "^3.0.4",
     "lodash.isfunction": "^3.0.6",
+    "lodash.sortby": "^3.1.5",
     "micromatch": "^2.2.0",
     "minimist": "^1.2.0",
     "nodemailer": "^1.8.0",
