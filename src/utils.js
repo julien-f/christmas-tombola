@@ -70,6 +70,10 @@ export function createGlobMatcher (patterns) {
       }
     }
 
+    if (m === 0) {
+      return true
+    }
+
     for (let i = 0; i < m; ++i) {
       if (anyMustMatch[i](entry)) {
         return true
@@ -187,6 +191,10 @@ export function parsePlayers (json) {
   ;(function loop (player) {
     if (isArray(player)) {
       return forEach(player, loop, this)
+    }
+
+    if (player.participate === false) {
+      return
     }
 
     player.displayName = player.disambiguation
