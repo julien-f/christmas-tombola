@@ -114,6 +114,57 @@ export function createMailer ({ transport: transportConfig, ...config }) {
 
 // -------------------------------------------------------------------
 
+export function draw (_items) {
+  const todo = []
+  const candidates = []
+  forEach(_items, item => {
+    todo.push(item)
+    candidates.push(item)
+  })
+
+  shuffleArray(candidates)
+
+  function drawItem (blacklist) {
+    let i = 0
+    const { length } = candidates
+
+    for (let i = 0; i < length; ++i) {
+      const candidate = candidates[i]
+
+      if (!blacklist.has(candidate.id)) {
+        // Remove the selected candidate.
+        const newLength = length - 1
+        candidates[i] = candidates[newLength]
+        candidates.length = newLength
+
+        return candidate
+      }
+    }
+
+    throw new Error('could not find a suitable candidate')
+  }
+
+  const lottery = { __proto__: null }
+
+  while (todo.length) {
+    // Sort by ascending blacklist size.
+    todo.sort((a, b) => a._blacklist.size - b._blacklist.size)
+
+    // Take the last one.
+    const item = todo.pop()
+
+    // The target cannot draw item.
+    const target = drawItem(item._blacklist)
+    target._blacklist.add(item.id)
+
+    lottery[item.id] = target.id
+  }
+
+  return lottery
+}
+
+// -------------------------------------------------------------------
+
 // Returns the value of a property and removes it from the object.
 export function extractProperty (obj, prop) {
   const value = obj[prop]
@@ -184,25 +235,69 @@ export const mapInPlace = (
 
 // -------------------------------------------------------------------
 
-export function parsePlayers (json) {
-  const data = parseJson(String(json))
+export const noop = () => {}
 
-  const players = {}
-  ;(function loop (player) {
-    if (isArray(player)) {
-      return forEach(player, loop, this)
-    }
+// -------------------------------------------------------------------
 
-    if (player.participate === false) {
-      return
-    }
+const _makeBlacklist = (parent = null) => ({
+  __proto__: parent,
+  _size: 0,
 
-    player.displayName = player.disambiguation
-      ? `${player.name} (${player.disambiguation})`
-      : player.name
+  get size () {
+    return parent
+      ? this._size + parent._size
+      : this._size
+  },
 
-    players[player.id] = player
-  }).call(this, data)
+  add (id) {
+    this[id] = true
+    ++this._size
+  },
+
+  has (id) {
+    return (id in this)
+  }
+})
+
+function _parsePlayer (player) {
+  if (isArray(player)) {
+    return forEach(player, _parsePlayer, {
+      __proto__: this,
+      blacklist: _makeBlacklist(this.blacklist)
+    })
+  }
+
+  if (player.participate === false) {
+    return
+  }
+
+  Object.defineProperty(player, '_blacklist', {
+    value: _makeBlacklist(this.blacklist)
+  })
+  player.displayName = player.disambiguation
+    ? `${player.name} (${player.disambiguation})`
+    : player.name
+
+  const { id } = player
+
+  // Registers the player
+  this.players[id] = player
+
+  // Update the common blacklist if any otherwise just the player one.
+  if (this.blacklist) {
+    this.blacklist.add(id)
+  } else {
+    player._blacklist.add(id)
+  }
+}
+
+export const parsePlayers = json => {
+  const players = { __proto__: null }
+
+  forEach(parseJson(String(json)), _parsePlayer, {
+    blacklist: null,
+    players
+  })
 
   return players
 }

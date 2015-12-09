@@ -7,7 +7,7 @@ import forEach from 'lodash.foreach'
 import minimist from 'minimist'
 import sortBy from 'lodash.sortby'
 import { load as loadConfig } from 'app-conf'
-import { readFile } from 'fs-promise'
+import { readFile, writeFile } from 'fs-promise'
 
 import {
   name as pkgName,
@@ -17,17 +17,69 @@ import {
   compileMailTemplate,
   createGlobMatcher,
   createMailer,
+  draw,
+  map,
   mapToArray,
+  noop,
   parsePlayers
 } from './utils'
 
 // ===================================================================
 
+function requireArg (name) {
+  const message = `Missing argument: ${name}`
+
+  throw message
+}
+
+// -------------------------------------------------------------------
+
 const COMMANDS = Object.freeze({
+  async draw ([ gameDir = requireArg('<game directory>') ]) {
+    const players = parsePlayers(await readFile(`${gameDir}/players.json`))
+    const lottery = draw(players)
+
+    forEach(lottery, (targetId, sourceId) => {
+      console.log(
+        '%s → %s',
+        players[sourceId].displayName,
+        players[targetId].displayName
+      )
+    })
+
+    // TODO: prompt to overwrite if necessary.
+    await writeFile(
+      `${gameDir}/lottery.json`,
+      JSON.stringify(lottery, null, 2),
+      { flag: 'wx' }
+    )
+  },
+
+  async dump ([ gameDir = requireArg('<game directory>') ]) {
+    const [
+      players,
+      lottery
+    ] = await Promise.all([
+      readFile(`${gameDir}/players.json`, 'utf8').then(parsePlayers),
+      readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop)
+    ])
+
+    if (lottery) {
+      forEach(lottery, (targetId, sourceId) => {
+        players[sourceId].target = players[targetId].displayName
+      })
+    }
+
+    return players
+  },
+
   async mail (args) {
     const {
       force: forceFlag = false,
-      _: [ playersFile, mailTemplateFile ],
+      _: [
+        gameDir = requireArg('<game directory>'),
+        mailTemplateFile = requireArg('<mail template>')
+      ],
       '--': patterns
     } = minimist(args, {
       boolean: ['force'],
@@ -39,10 +91,12 @@ const COMMANDS = Object.freeze({
 
     const [
       players,
-      mailTemplate
+      mailTemplate,
+      lottery
     ] = await Promise.all([
-      readFile(playersFile, 'utf8').then(parsePlayers),
-      readFile(mailTemplateFile, 'utf8').then(compileMailTemplate)
+      readFile(`${gameDir}/players.json`, 'utf8').then(parsePlayers),
+      readFile(mailTemplateFile, 'utf8').then(compileMailTemplate),
+      readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop)
     ])
 
     const sendMail = createMailer(this.config.mail)
@@ -59,18 +113,13 @@ const COMMANDS = Object.freeze({
 
       return sendMail(mailTemplate({
         player,
-        players: sortedPlayers
+        players: sortedPlayers,
+        target: lottery && players[lottery[player.id]]
       }), forceFlag).then(
         ::console.log,
         ::console.error
       )
     }))
-  },
-
-  async test (args) {
-    const players = parsePlayers(await readFile(args[0]))
-
-    return players
   }
 })
 
