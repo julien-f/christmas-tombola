@@ -13,10 +13,10 @@
   "author": "Julien Fontanet <julien.fontanet@isonoe.net> (http://julien.isonoe.net/)",
   "license": "BSD-2-Clause",
   "dependencies": {
-    "coffee-script": "~1.6.3",
-    "handlebars": "~1.1.2",
-    "marked": "~0.2.10",
-    "nconf": "~0.6.9",
-    "nodemailer": "~0.5.14"
+    "coffee-script": "~1.11.1",
+    "handlebars": "~4.0.5",
+    "marked": "~0.3.6",
+    "nconf": "~0.8.4",
+    "nodemailer": "~2.6.4"
   }
 }
