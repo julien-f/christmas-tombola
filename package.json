@@ -27,7 +27,7 @@
     "exec-promise": "^0.5.1",
     "front-matter": "^2.0.0",
     "fs-promise": "^0.3.1",
-    "handlebars": "~4.0.5",
+    "handlebars": "^4.0.4",
     "json5": "^0.4.0",
     "lodash.foreach": "^3.0.3",
     "lodash.isarray": "^3.0.4",
