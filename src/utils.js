@@ -1,15 +1,17 @@
-import forEach from 'lodash.foreach'
 import frontMatter from 'front-matter'
-import isArray from 'lodash.isarray'
-import isFunction from 'lodash.isfunction'
-import isString from 'lodash.isstring'
 import nodemailer from 'nodemailer'
 import nodemailerStubTransport from 'nodemailer-stub-transport'
-import pify from 'pify'
 import { compile as handlebars } from 'handlebars'
 import { markdown as nodemailerMarkdown } from 'nodemailer-markdown'
 import { matcher as createSingleGlobaMatcher } from 'micromatch'
 import { parse as parseJson } from 'json5'
+import { promisify } from 'promise-toolbox'
+import {
+  forEach,
+  isArray,
+  isFunction,
+  isString
+} from 'lodash'
 
 // ===================================================================
 
@@ -43,7 +45,7 @@ export function compileMailTemplate (source) {
 
   compileRecursively(mailTemplate)
 
-  return context => context::evaluateRecursively(mailTemplate)
+  return context => evaluateRecursively.call(context, mailTemplate)
 }
 
 // -------------------------------------------------------------------
@@ -90,18 +92,18 @@ const markdownCompiler = nodemailerMarkdown({
   useEmbeddedImages: true
 })
 
-const sendMailStub = promisify((() => {
+const sendMailStub = (() => {
   const transport = nodemailer.createTransport(nodemailerStubTransport())
   transport.use('compile', markdownCompiler)
 
-  return ::transport.sendMail
-})())
+  return promisify(transport.sendMail, transport)
+})()
 
 export function createMailer ({ transport: transportConfig, ...config }) {
   const transport = nodemailer.createTransport(transportConfig)
   transport.use('compile', markdownCompiler)
 
-  const sendMail = promisify(::transport.sendMail)
+  const sendMail = promisify(transport.sendMail, transport)
 
   return (data, noTest = false) => {
     data = { ...config, ...data }
@@ -125,7 +127,6 @@ export function draw (_items) {
   shuffleArray(candidates)
 
   function drawItem (blacklist) {
-    let i = 0
     const { length } = candidates
 
     for (let i = 0; i < length; ++i) {
@@ -300,12 +301,6 @@ export const parsePlayers = json => {
   })
 
   return players
-}
-
-// -------------------------------------------------------------------
-
-export function promisify (fn) {
-  return pify(fn, Promise)
 }
 
 // -------------------------------------------------------------------

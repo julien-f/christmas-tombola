@@ -3,11 +3,13 @@
 import '../.mocha'
 
 import execPromise from 'exec-promise'
-import forEach from 'lodash.foreach'
 import minimist from 'minimist'
-import sortBy from 'lodash.sortby'
 import { load as loadConfig } from 'app-conf'
 import { readFile, writeFile } from 'fs-promise'
+import {
+  forEach,
+  orderBy
+} from 'lodash'
 
 import {
   name as pkgName,
@@ -18,7 +20,6 @@ import {
   createGlobMatcher,
   createMailer,
   draw,
-  map,
   mapToArray,
   noop,
   parsePlayers
@@ -104,7 +105,7 @@ const COMMANDS = Object.freeze({
       ? createGlobMatcher(patterns)
       : () => true
 
-    const sortedPlayers = sortBy(players, 'displayName')
+    const sortedPlayers = orderBy(players, 'displayName')
 
     await Promise.all(mapToArray(players, player => {
       if (!isPlayerEnabled(player.email)) {
@@ -116,8 +117,8 @@ const COMMANDS = Object.freeze({
         players: sortedPlayers,
         target: lottery && players[lottery[player.id]]
       }), forceFlag).then(
-        ::console.log,
-        ::console.error
+        console.log,
+        console.error
       )
     }))
   }
