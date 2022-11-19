@@ -16,81 +16,42 @@
     "email": "julien.fontanet@isonoe.net"
   },
   "preferGlobal": false,
-  "main": "dist/",
-  "bin": {},
-  "files": [
-    "dist/"
-  ],
+  "bin": {
+    "christmas-tombola": "cli.mjs"
+  },
   "engines": {
-    "node": ">=4"
+    "node": ">=14.17"
   },
   "dependencies": {
-    "app-conf": "^0.4.1",
-    "babel-runtime": "^6.20.0",
+    "app-conf": "^2.3.0",
     "exec-promise": "^0.6.1",
     "front-matter": "^2.1.1",
-    "fs-promise": "^1.0.0",
+    "getopts": "^2.3.0",
     "handlebars": "^4.0.6",
-    "json5": "^0.5.1",
+    "json5": "^2.2.1",
     "lodash": "^4.17.4",
-    "micromatch": "^2.3.11",
-    "minimist": "^1.2.0",
-    "nodemailer": "^2.7.0",
-    "nodemailer-markdown": "^1.0.1",
-    "nodemailer-stub-transport": "^1.1.0",
-    "promise-toolbox": "^0.8.0"
-  },
-  "devDependencies": {
-    "babel-cli": "^6.18.0",
-    "babel-eslint": "^7.1.1",
-    "babel-plugin-lodash": "^3.2.11",
-    "babel-plugin-transform-runtime": "^6.15.0",
-    "babel-preset-env": "^1.1.8",
-    "babel-preset-stage-3": "^6.17.0",
-    "cross-env": "^3.1.4",
-    "dependency-check": "^2.7.0",
-    "husky": "^0.12.0",
-    "jest": "^18.1.0",
-    "rimraf": "^2.5.4",
-    "standard": "^8.6.0"
+    "marked": "^4.2.2",
+    "micromatch": "^4.0.5",
+    "nodemailer": "^6.8.0"
   },
   "scripts": {
-    "build": "cross-env NODE_ENV=production babel --source-maps --out-dir=dist/ src/",
-    "commit-msg": "npm test",
-    "dev": "cross-env NODE_ENV=development babel --watch --source-maps --out-dir=dist/ src/",
-    "dev-test": "jest --bail --watch",
-    "posttest": "standard && dependency-check ./package.json",
-    "prebuild": "rimraf dist/",
-    "predev": "npm run prebuild",
-    "prepublish": "npm run build",
-    "test": "jest"
+    "prepare": "husky install"
   },
-  "babel": {
-    "plugins": [
-      "lodash"
-    ],
-    "presets": [
-      [
-        "env",
-        {
-          "targets": {
-            "node": 4
-          }
-        }
-      ],
-      "stage-3"
+  "lint-staged": {
+    "*.{,c,m}js": [
+      "prettier --write",
+      "eslint --ignore-pattern '!*'"
     ]
   },
-  "jest": {
-    "testPathDirs": [
-      "<rootDir>/src"
-    ],
-    "testRegex": "\\.spec\\.js$"
-  },
-  "standard": {
-    "ignore": [
-      "dist"
-    ],
-    "parser": "babel-eslint"
+  "devDependencies": {
+    "eslint": "^8.28.0",
+    "eslint-config-prettier": "^8.5.0",
+    "eslint-config-standard": "^17.0.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-n": "^15.5.1",
+    "eslint-plugin-promise": "^6.1.1",
+    "husky": "^8.0.2",
+    "lint-staged": "^13.0.3",
+    "prettier": "^2.7.1"
   }
 }
