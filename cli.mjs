@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
+import { dirname, join } from "node:path";
 import { load as loadConfig } from "app-conf";
 import { readFile, writeFile } from "fs/promises";
-import { readFileSync } from "fs";
+import { readFileSync } from "node:fs";
 import execPromise from "exec-promise";
 import forEach from "lodash/forEach.js";
 import getopts from "getopts";
@@ -17,6 +18,7 @@ import {
   noop,
   parsePlayers,
 } from "./utils.mjs";
+import { sendSms } from "./_sendSms.mjs";
 
 // ===================================================================
 
@@ -29,8 +31,12 @@ function requireArg(name) {
 // -------------------------------------------------------------------
 
 const COMMANDS = Object.freeze({
-  async draw([gameDir = requireArg("<game directory>")]) {
-    const players = parsePlayers(await readFile(`${gameDir}/players.json`));
+  async draw([playersFile = requireArg("<game directory>"), lotteryFile]) {
+    if (lotteryFile === undefined) {
+      lotteryFile = join(dirname(playersFile), "lottery.json");
+    }
+
+    const players = parsePlayers(await readFile(playersFile));
     const lottery = draw(players);
 
     forEach(lottery, (targetId, sourceId) => {
@@ -42,11 +48,9 @@ const COMMANDS = Object.freeze({
     });
 
     // TODO: prompt to overwrite if necessary.
-    await writeFile(
-      `${gameDir}/lottery.json`,
-      JSON.stringify(lottery, null, 2),
-      { flag: "wx" }
-    );
+    await writeFile(lotteryFile, JSON.stringify(lottery, null, 2), {
+      flag: "wx",
+    });
   },
 
   async dump([gameDir = requireArg("<game directory>")]) {
@@ -80,7 +84,7 @@ const COMMANDS = Object.freeze({
     });
 
     const [players, mailTemplate, lottery] = await Promise.all([
-      readFile(`${gameDir}/players.json`, "utf8").then(parsePlayers),
+      readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
       readFile(mailTemplateFile, "utf8").then(compileMailTemplate),
       readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop),
     ]);
@@ -97,6 +101,8 @@ const COMMANDS = Object.freeze({
         if (!isPlayerEnabled(player.email)) {
           return;
         }
+        console.log(player.email);
+        return;
 
         return sendMail(
           mailTemplate({

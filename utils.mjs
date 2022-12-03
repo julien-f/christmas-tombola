@@ -250,13 +250,25 @@ function _parsePlayer(player) {
     ? `${player.name} (${player.disambiguation})`
     : player.name;
 
-  const { id } = player;
+  let { id } = player;
+  if (id === undefined) {
+    id = player.displayName;
+    player.id = id;
+  }
 
   // Registers the player
-  this.players[id] = player;
+  const { players } = this;
+  if (id in players) {
+    throw new Error("duplicate player id: " + id);
+  }
+  players[id] = player;
 
-  // Update the common blacklist if any otherwise just the player one.
+  if (player.email === undefined && player.phone === undefined) {
+    console.warn("WARNING: player %s has neither email or phone defined", id);
+  }
+
   if (this.blacklist) {
+    // Update the common blacklist if any otherwise just the player one.
     this.blacklist.add(id);
   } else {
     player._blacklist.add(id);
