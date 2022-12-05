@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import execPromise from "exec-promise";
 import forEach from "lodash/forEach.js";
 import getopts from "getopts";
+import Handlebars from "handlebars";
 import orderBy from "lodash/orderBy.js";
 
 import {
@@ -14,7 +15,6 @@ import {
   createGlobMatcher,
   createMailer,
   draw,
-  mapToArray,
   noop,
   parsePlayers,
 } from "./utils.mjs";
@@ -55,7 +55,7 @@ const COMMANDS = Object.freeze({
 
   async dump([gameDir = requireArg("<game directory>")]) {
     const [players, lottery] = await Promise.all([
-      readFile(`${gameDir}/players.json`, "utf8").then(parsePlayers),
+      readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
       readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop),
     ]);
 
@@ -68,7 +68,7 @@ const COMMANDS = Object.freeze({
     return players;
   },
 
-  async mail(args) {
+  async email(args) {
     const {
       force: forceFlag = false,
       _: [
@@ -89,29 +89,107 @@ const COMMANDS = Object.freeze({
       readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop),
     ]);
 
-    const sendMail = createMailer(this.config.mail);
-    const isPlayerEnabled = patterns.length
-      ? createGlobMatcher(patterns)
-      : () => true;
+    const sendMail = await createMailer(this.config.email);
+    const isPlayerEnabled = createGlobMatcher(patterns);
 
     const sortedPlayers = orderBy(players, "displayName");
 
     await Promise.all(
-      mapToArray(players, (player) => {
-        if (!isPlayerEnabled(player.email)) {
+      sortedPlayers.map(async (player) => {
+        if (!isPlayerEnabled(player.displayName.toLowerCase())) {
           return;
         }
-        console.log(player.email);
-        return;
 
-        return sendMail(
-          mailTemplate({
-            player,
-            players: sortedPlayers,
-            target: lottery && players[lottery[player.id]],
-          }),
-          forceFlag
-        ).then(console.log, console.error);
+        if (player.email === undefined) {
+          console.warn("email: player %s has no address", player.displayName);
+          return;
+        }
+
+        try {
+          await sendMail(
+            mailTemplate({
+              player,
+              players: sortedPlayers,
+              target: lottery && players[lottery[player.id]],
+            }),
+            forceFlag
+          );
+          console.log(
+            "email sent to %s (%s)",
+            player.displayName,
+            player.email
+          );
+        } catch (error) {
+          console.log(
+            "failed sending email to %s (%s)",
+            player.displayName,
+            player.email,
+            error
+          );
+        }
+      })
+    );
+  },
+
+  async sms(args) {
+    const {
+      force = false,
+      _: [
+        gameDir = requireArg("<game directory>"),
+        templateFile = requireArg("<mail template>"),
+        ...patterns
+      ],
+    } = getopts(args, {
+      boolean: ["force"],
+      alias: {
+        force: ["f"],
+      },
+    });
+
+    const [players, template, lottery] = await Promise.all([
+      readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
+      readFile(templateFile, "utf8").then(Handlebars.compile),
+      readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop),
+    ]);
+
+    const isPlayerEnabled = createGlobMatcher(
+      patterns.map((_) => _.toLowerCase())
+    );
+
+    const sortedPlayers = orderBy(players, "displayName");
+
+    await Promise.all(
+      sortedPlayers.map(async (player) => {
+        if (!isPlayerEnabled(player.displayName.toLowerCase())) {
+          return;
+        }
+
+        if (player.phone === undefined) {
+          console.warn("sms: player %s has no number", player.displayName);
+          return;
+        }
+
+        const message = template({
+          player,
+          players: sortedPlayers,
+          target: lottery && players[lottery[player.id]],
+        });
+
+        if (force) {
+          return sendSms(this.config.sms, player.phone, message).then(
+            console.log,
+            console.error
+          );
+        }
+
+        console.log(
+          "would have sent the following message to %s (%s)",
+          player.displayName,
+          player.phone
+        );
+        console.log("---");
+        console.log(message);
+        console.log("---");
       })
     );
   },

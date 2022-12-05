@@ -5,6 +5,7 @@ import handlebars from "handlebars";
 import JSON5 from "json5";
 import micromatch from "micromatch";
 import nodemailer from "nodemailer";
+import stubTrue from "lodash/stubTrue.js";
 
 // ===================================================================
 
@@ -41,6 +42,10 @@ export function compileMailTemplate(source) {
 // -------------------------------------------------------------------
 
 export function createGlobMatcher(patterns) {
+  if (patterns.length === 0) {
+    return stubTrue;
+  }
+
   const noneMustMatch = [];
   const anyMustMatch = [];
 
@@ -78,19 +83,22 @@ export function createGlobMatcher(patterns) {
 
 // -------------------------------------------------------------------
 
-export function createMailer({ transport: transportConfig, ...config }) {
+export async function createMailer({ transport: transportConfig, ...config }) {
   const transport = nodemailer.createTransport(transportConfig);
 
-  return (data, noTest = false) => {
+  await transport.verify();
+
+  return async function sendMail(data, noTest = false) {
     data = { ...config, ...data };
 
     const { markdown } = data;
     if (markdown !== undefined) {
+      delete data.markdown;
       data.text = markdown;
       data.html = marked.parse(markdown);
     }
 
-    return noTest ? transport.sendMail(data) : console.log(data);
+    return noTest && transport.sendMail(data);
   };
 }
 
@@ -189,27 +197,12 @@ export function map(
   return target;
 }
 
-export function mapToArray(collection, iteratee, thisArg) {
-  const target = [];
-
-  forEach(collection, (item, i) => {
-    const value = iteratee.call(thisArg, item, i, collection, DONE);
-    if (value === DONE) {
-      return false;
-    }
-
-    target.push(value);
-  });
-
-  return target;
-}
-
 export const mapInPlace = (collection, iteratee, thisArg) =>
   map(collection, iteratee, thisArg, collection);
 
 // -------------------------------------------------------------------
 
-export const noop = () => {};
+export const noop = Function.prototype;
 
 // -------------------------------------------------------------------
 
