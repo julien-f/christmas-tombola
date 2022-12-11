@@ -36,8 +36,16 @@ const COMMANDS = Object.freeze({
       lotteryFile = join(dirname(playersFile), "lottery.json");
     }
 
+    let lottery = await readFile(lotteryFile)
+      .then(JSON.parse)
+      .catch((error) => {
+        if (error.code !== "ENOENT") {
+          console.warn("error reading lottery", error);
+        }
+      });
+
     const players = parsePlayers(await readFile(playersFile));
-    const lottery = draw(players);
+    lottery = draw(players, lottery);
 
     forEach(lottery, (targetId, sourceId) => {
       console.log(
@@ -47,10 +55,7 @@ const COMMANDS = Object.freeze({
       );
     });
 
-    // TODO: prompt to overwrite if necessary.
-    await writeFile(lotteryFile, JSON.stringify(lottery, null, 2), {
-      flag: "wx",
-    });
+    await writeFile(lotteryFile, JSON.stringify(lottery, null, 2));
   },
 
   async dump([gameDir = requireArg("<game directory>")]) {

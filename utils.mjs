@@ -104,13 +104,20 @@ export async function createMailer({ transport: transportConfig, ...config }) {
 
 // -------------------------------------------------------------------
 
-export function draw(_items) {
+export function draw(_items, lottery = { __proto__: null }) {
+  const haveTarget = new Set(Object.keys(lottery));
+  const haveBeenAssigned = new Set(Object.values(lottery));
+
   const todo = [];
   const candidates = [];
-  forEach(_items, (item) => {
-    todo.push(item);
-    candidates.push(item);
-  });
+  for (const item of Object.values(_items)) {
+    if (!haveTarget.has(item.id)) {
+      todo.push(item);
+    }
+    if (!haveBeenAssigned.has(item.id)) {
+      candidates.push(item);
+    }
+  }
 
   shuffleArray(candidates);
 
@@ -132,8 +139,6 @@ export function draw(_items) {
 
     throw new Error("could not find a suitable candidate");
   }
-
-  const lottery = { __proto__: null };
 
   while (todo.length) {
     // Sort by ascending blacklist size.
