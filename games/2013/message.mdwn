@@ -1,0 +1,11 @@
+Bonjour agent spécial {{#if player.firstname}}{{player.firstname}}{{else}}{{player.name}}{{/if}},
+
+Ta mission, si tu l'accepte, est de trouver un cadeau de Noël pour **{{target.name}}** d'une valeur maximale de *20€*.
+
+*Si tu ne peux remplir tes objectifs, pour une raison ou pour une autre, contacte moi très rapidement (deux-trois jours), afin que je puisse missioner un autre agent !*
+
+Pour ton information, les personnes suivantes sont également impliquées dans l'affaire :
+{{#players}}
+- {{name}}{{/players}}
+
+P.S. : Désolé pour l'ordre de mission tardif, on essayera de faire mieux l'année prochaine :P

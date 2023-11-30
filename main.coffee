@@ -33,35 +33,40 @@ do ->
   players = require $path.resolve $nconf.get 'players'
 
   # For each player, computes a list of candidates.
-  for id, player of players
-    player._candidates = (candidateId for candidateId, candidate of players \
+  toCompute = for id, player of players
+    candidates = (candidateId for candidateId, candidate of players \
       when candidateId isnt id \
         and candidateId isnt player.lover)
 
+    {id, player, candidates}
+
   # For each player, randomly selects a target from its candidates and
   # makes sure this target will not be picked again.
-  toCompute = (player for _, player of players)
   while toCompute.length isnt 0
     # Sorts player by decreasing number of candidates.
     toCompute.sort (a, b) ->
-      a = a._candidates.length
-      b = b._candidates.length
+      a = a.candidates.length
+      b = b.candidates.length
 
       if a is b then 0 else if a < b then 1 else -1
 
-    player = toCompute.pop()
+    {id, player, candidates} = toCompute.pop()
 
-    n = player._candidates.length
-    throw "#{player.name} does not have a candidate" if n is 0
+    n = candidates.length
+    throw "#{id} does not have a candidate" if n is 0
 
     # Randomly selects a target amongst candidates.
-    target = player.target = player._candidates[random n]
-    delete player._candidates
+    target = player.target = candidates[random n]
 
     # Remove this target from other players candidates.
-    for player in toCompute
-      i = player._candidates.indexOf target
-      player._candidates.splice i, 1 if i isnt -1
+    for {id_, candidates} in toCompute
+      i = candidates.indexOf target
+      candidates.splice i, 1 if i isnt -1
+
+      # And we don't want to have player <-> target.
+      if id_ is target
+        i = candidates.indexOf id
+        candidates.splice i, 1 if i isnt -1
 
   # Prints the result in JSON.
   console.log JSON.stringify players
