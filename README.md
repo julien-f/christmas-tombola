@@ -59,11 +59,13 @@ christmas-tombola draw <game directory>
 christmas-tombola dump <game directory>
 christmas-tombola email <game directory> <template> [<pattern>...]
 christmas-tombola sms <game directory> <template> [<pattern>...]
+christmas-tombola sms-test <phone> [<message>]
 ```
 
 - Targets stay hidden, so the organizer can play too; `--show` reveals them (`draw`, `dump`, dry runs).
 - `draw` again after editing players: pairs of players who left or breaking new groups are redrawn, new players are inserted, and it lists who has a new target (send to them again).
 - `email` and `sms` only print the messages; `--force` (`-f`) sends them. Failed players are listed and the exit code is 1.
+- `sms-test` sends one SMS right away, to check the gateway configuration.
 - Patterns (case-insensitive globs on displayed names) select players: `'a*' '!alice'`.
 - Before the draw (no `lottery.json`), templates can announce the game without `target`.
 
