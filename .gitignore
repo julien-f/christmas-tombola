@@ -13,3 +13,6 @@ yarn-error.log
 /games.tar.*
 /config.*
 /.christmas-tombola.*
+
+# Git worktrees of Claude Code sessions
+/.claude/worktrees/
