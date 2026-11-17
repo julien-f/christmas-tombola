@@ -126,18 +126,36 @@ export function draw(players, previous = {}, { random = Math.random } = {}) {
     (sampleAssignment(sources, targets, lottery, canDraw, random) ||
       searchAssignment(sources, targets, lottery, canDraw, random));
 
-  // Release existing pairs one at a time until the open slots can be
-  // filled, e.g. a new player N and a released A → B give A → N → B.
-  const kept = Object.keys(lottery);
-  shuffleArray(kept, random);
-  while (!fill()) {
-    const source = kept.pop();
-    if (source === undefined) {
-      throw new Error("no valid draw exists");
-    }
+  const release = (source) => {
     sources.push(source);
     targets.push(lottery[source]);
     delete lottery[source];
+  };
+  const releaseAlone = (source) => {
+    const target = lottery[source];
+    release(source);
+    if (fill()) {
+      return true;
+    }
+    sources.pop();
+    targets.pop();
+    lottery[source] = target;
+    return false;
+  };
+
+  // If the open slots cannot be filled, release a single existing pair if
+  // that suffices (e.g. a new player N and a released A → B give
+  // A → N → B), otherwise pairs one at a time until it does.
+  const kept = Object.keys(lottery);
+  shuffleArray(kept, random);
+  if (!fill() && !kept.some(releaseAlone)) {
+    do {
+      const source = kept.pop();
+      if (source === undefined) {
+        throw new Error("no valid draw exists");
+      }
+      release(source);
+    } while (!fill());
   }
 
   // A released pair can be drawn again.

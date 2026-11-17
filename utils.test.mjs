@@ -311,6 +311,8 @@ describe("draw with an existing lottery", () => {
         notify,
         Object.keys(players).filter((id) => lottery[id] !== previous[id]),
       );
+      // N and the giver of a single released pair.
+      assert.equal(notify.length, 2, JSON.stringify({ previous, lottery }));
     }
   });
 
