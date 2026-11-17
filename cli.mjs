@@ -24,15 +24,29 @@ function requireArg(name) {
   throw message;
 }
 
-const parseCommandArgs = (args) =>
-  parseArgs({
-    args,
-    allowPositionals: true,
-    options: {
-      force: { type: "boolean", short: "f", default: false },
-      show: { type: "boolean", default: false },
-    },
-  });
+function requireConfig(config, key) {
+  if (config[key] === undefined) {
+    // eslint-disable-next-line no-throw-literal
+    throw `missing \`${key}\` section in the configuration`;
+  }
+  return config[key];
+}
+
+function parseCommandArgs(args) {
+  try {
+    return parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        force: { type: "boolean", short: "f", default: false },
+        show: { type: "boolean", default: false },
+      },
+    });
+  } catch (error) {
+    // A usage error, not a bug: no stack trace.
+    throw error.message;
+  }
+}
 
 const sortByDisplayName = (players) =>
   Object.values(players).sort((a, b) =>
@@ -120,7 +134,9 @@ const COMMANDS = Object.freeze({
       compile: compileMailTemplate,
       format: ({ subject, text }) => `Subject: ${subject}\n\n${text}`,
       createSender: async () => {
-        const sendMail = await createMailer(this.config.email);
+        const sendMail = await createMailer(
+          requireConfig(this.config, "email"),
+        );
         // Not from the template: a comma in a name would split it.
         return (player, message) =>
           sendMail(
@@ -136,8 +152,10 @@ const COMMANDS = Object.freeze({
       contact: "phone",
       compile: (source) => Handlebars.compile(source, { noEscape: true }),
       format: (message) => message,
-      createSender: () => (player, message) =>
-        sendSms(this.config.sms, player.phone, message),
+      createSender: () => {
+        const config = requireConfig(this.config, "sms");
+        return (player, message) => sendSms(config, player.phone, message);
+      },
     });
   },
 });
@@ -165,12 +183,14 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
   const isSelected = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
   const sortedPlayers = sortByDisplayName(players);
   const failures = [];
+  let selected = 0;
 
   for (const player of sortedPlayers) {
     const name = player.displayName;
     if (!isSelected(name.toLowerCase())) {
       continue;
     }
+    ++selected;
 
     if (player[contact] === undefined) {
       console.warn("%s: no %s, skipped", name, contact);
@@ -182,7 +202,7 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
     if (lottery !== undefined) {
       target = players[lottery[player.id]];
       if (target === undefined) {
-        console.error("%s: no target, run draw first", name);
+        console.error("%s: no valid target in lottery.json, run draw", name);
         failures.push(name);
         continue;
       }
@@ -214,6 +234,10 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
     }
   }
 
+  if (selected === 0) {
+    // eslint-disable-next-line no-throw-literal
+    throw "no player selected";
+  }
   if (failures.length !== 0) {
     console.error("not sent to: %s", failures.join(", "));
     process.exitCode = 1;
@@ -229,13 +253,18 @@ const { name: pkgName, version: pkgVersion } = JSON.parse(
 );
 
 const help = `
-Usage: ${pkgName} <command> [arguments]
+Usage: ${pkgName} <command> [options] <arguments>
 
 Commands:
-  draw [--show] <game directory>
-  dump [--show] <game directory>
-  email [--force] <game directory> <mail template> [<pattern>...]
-  sms [--force] <game directory> <sms template> [<pattern>...]
+  draw <game directory>
+  dump <game directory>
+  email <game directory> <mail template> [<pattern>...]
+  sms <game directory> <sms template> [<pattern>...]
+
+Options:
+  --show       show targets (hidden by default)
+  -f, --force  email, sms: really send (only printed by default)
+  -h, --help   show this help (as <command>)
 
 ${pkgName} v${pkgVersion}
 `;
