@@ -1,3 +1,32 @@
+// GSM 03.38 alphabet; extension characters take two septets.
+const GSM_BASIC = new Set(
+  "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
+    "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà",
+);
+const GSM_EXTENSION = new Set("\f^{}\\[]~|€");
+
+// Estimated number of SMS parts for `text`, and the first character that
+// forces UCS-2 encoding (70 instead of 160 characters per SMS), if any.
+export function smsSegments(text) {
+  let septets = 0;
+  for (const char of text) {
+    if (GSM_BASIC.has(char)) {
+      septets += 1;
+    } else if (GSM_EXTENSION.has(char)) {
+      septets += 2;
+    } else {
+      return {
+        count: text.length <= 70 ? 1 : Math.ceil(text.length / 67),
+        nonGsm: char,
+      };
+    }
+  }
+  return {
+    count: septets <= 160 ? 1 : Math.ceil(septets / 153),
+    nonGsm: undefined,
+  };
+}
+
 // Sends an SMS through an SMS Gate (https://sms-gate.app) phone.
 export async function sendSms(
   { url, username, password, timeout = 30e3 },

@@ -2,7 +2,29 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
 
-import { sendSms } from "./_sendSms.mjs";
+import { sendSms, smsSegments } from "./_sendSms.mjs";
+
+describe("smsSegments", () => {
+  it("counts GSM-7 messages: 160 characters, then 153 per part", () => {
+    assert.deepEqual(smsSegments("Hello"), { count: 1, nonGsm: undefined });
+    assert.equal(smsSegments("é".repeat(160)).count, 1);
+    assert.equal(smsSegments("a".repeat(161)).count, 2);
+    assert.equal(smsSegments("a".repeat(306)).count, 2);
+    assert.equal(smsSegments("a".repeat(307)).count, 3);
+  });
+
+  it("counts extension characters twice", () => {
+    assert.equal(smsSegments("€".repeat(80)).count, 1);
+    assert.equal(smsSegments("[".repeat(81)).count, 2);
+  });
+
+  it("counts other messages in UTF-16 units: 70, then 67 per part", () => {
+    assert.deepEqual(smsSegments("ç"), { count: 1, nonGsm: "ç" });
+    assert.equal(smsSegments("ç" + "a".repeat(69)).count, 1);
+    assert.equal(smsSegments("ç" + "a".repeat(70)).count, 2);
+    assert.deepEqual(smsSegments("a😀".repeat(24)), { count: 2, nonGsm: "😀" });
+  });
+});
 
 describe("sendSms", () => {
   let server, config;

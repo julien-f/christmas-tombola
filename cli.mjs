@@ -18,7 +18,10 @@ import {
   shellQuote,
   unreachablePlayers,
 } from "./utils.mjs";
-import { sendSms } from "./_sendSms.mjs";
+import { sendSms, smsSegments } from "./_sendSms.mjs";
+
+// Android's default limit, per 30 minutes.
+const SMS_LIMIT = 30;
 
 // ===================================================================
 
@@ -166,9 +169,25 @@ const COMMANDS = Object.freeze({
       command: "sms",
       contact: "phone",
       compile: compileTextTemplate,
-      format: (message) => message,
-      createSender: () => {
+      format: (message) => {
+        const { count, nonGsm } = smsSegments(message);
+        return `${message}\n(~${count} SMS${
+          nonGsm === undefined ? "" : `, shorter because of "${nonGsm}"`
+        })`;
+      },
+      createSender: (messages) => {
         const config = requireConfig(this.config, "sms");
+        const total = messages.reduce(
+          (sum, message) => sum + smsSegments(message).count,
+          0,
+        );
+        if (total > SMS_LIMIT) {
+          console.warn(
+            "%d SMS: past %d in 30 minutes, Android asks on the phone to allow more",
+            total,
+            SMS_LIMIT,
+          );
+        }
         return (player, message) => sendSms(config, player.phone, message);
       },
     });
@@ -215,8 +234,6 @@ async function sendToPlayers(
     }),
   ]);
 
-  // `send(player, message)`, created upfront to check the configuration.
-  const send = force ? await createSender() : undefined;
   const isSelected = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
   const sortedPlayers = sortByDisplayName(players);
   const hiddenTarget = hideTarget(players);
@@ -281,6 +298,9 @@ async function sendToPlayers(
   }
 
   if (force) {
+    // `send(player, message)`, created before sending any to check the
+    // configuration.
+    const send = await createSender(messages.map(({ message }) => message));
     for (const { player, message } of messages) {
       const name = player.displayName;
       try {

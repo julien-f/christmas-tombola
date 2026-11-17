@@ -17,7 +17,8 @@ SMS are sent by an Android phone running [SMS Gate](https://sms-gate.app) in Loc
 
 - disable battery optimization for the app (Samsung: _Unrestricted_), else the server stops when the screen is off;
 - phone numbers in international format (`+33612345678`);
-- past 30 SMS in 30 minutes, Android asks on the phone to allow more.
+- past 30 SMS in 30 minutes, Android asks on the phone to allow more: `sms --force` warns first;
+- a character outside the GSM alphabet (e.g. `ç`, `ê`, emoji) cuts each SMS from 160 to 70 characters: the dry run shows the estimated count.
 
 ## Game directory
 
