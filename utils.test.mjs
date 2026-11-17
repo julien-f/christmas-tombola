@@ -267,7 +267,7 @@ describe("draw with an existing lottery", () => {
           .sort(),
       );
       const giverToX = dropped.find(([, target]) => target === "X")[0];
-      assert.equal(notify[0], giverToX);
+      assert(notify.includes(giverToX));
       // Another pair is redrawn only when Y → X → Z → Y left Y ↔ Z.
       if (previous[previous.X] === giverToX) {
         assert(notify.length > 1);
@@ -297,6 +297,20 @@ describe("draw with an existing lottery", () => {
           assert.equal(lottery[source], target);
         }
       }
+    }
+  });
+
+  it("inserts a new player into a group", () => {
+    for (let seed = 0; seed < 200; ++seed) {
+      const random = seededRandom(seed);
+      const previous = { ...drawLottery(makePlayers(six), {}, { random }) };
+      const players = makePlayers([["A", "N"], "B", "C", "D", "E", "F"]);
+      const { lottery, notify } = draw(players, previous, { random });
+      assertValid(players, lottery);
+      assert.deepEqual(
+        notify,
+        Object.keys(players).filter((id) => lottery[id] !== previous[id]),
+      );
     }
   });
 

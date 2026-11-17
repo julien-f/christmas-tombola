@@ -119,7 +119,6 @@ export function draw(players, previous = {}, { random = Math.random } = {}) {
   const ids = Object.keys(players);
   const sources = ids.filter((id) => !(id in lottery));
   const targets = ids.filter((id) => !targeted.has(id));
-  const notify = new Set(sources);
 
   // The matching rules out impossible fills before sampling them.
   const fill = () =>
@@ -139,10 +138,11 @@ export function draw(players, previous = {}, { random = Math.random } = {}) {
     sources.push(source);
     targets.push(lottery[source]);
     delete lottery[source];
-    notify.add(source);
   }
 
-  return { lottery, dropped, notify: [...notify] };
+  // A released pair can be drawn again.
+  const notify = ids.filter((id) => lottery[id] !== previous[id]);
+  return { lottery, dropped, notify };
 }
 
 function sampleAssignment(sources, targets, result, canDraw, random) {
