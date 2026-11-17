@@ -1,52 +1,46 @@
 #!/bin/sh
 # Runs the checks in parallel and prints the output of the failing ones. A check
-# is skipped if its inputs already passed it, in any worktree (content-keyed
-# stamps in the common Git directory).
-
-set -f # pathspecs below are for Git, not for the shell
+# is skipped if it already passed on the same inputs, in any worktree
+# (content-keyed stamps in the common Git directory).
 
 stamps=$(git rev-parse --git-common-dir)/check-stamps
 mkdir -p "$stamps"
 find "$stamps" -type f -mtime +30 -delete
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
+trap 'exit 130' INT TERM
 
-# Hash of a check's name, Node, the installed dependencies and the files matching
-# the pathspecs (tracked or not, present, not ignored).
-key() {
-  name=$1
-  shift
-  files=$(git ls-files -co --exclude-standard -- "$@" | while read -r f; do [ -e "$f" ] && echo "$f"; done)
-  {
-    echo "$name"
-    node --version
-    cat node_modules/.package-lock.json
-    echo "$files"
-    echo "$files" | git hash-object --stdin-paths
-  } | git hash-object --stdin
-}
+# Hash of Node, the installed dependencies and every file not ignored by
+# .gitignore (the ignores ESLint and Prettier use), tracked or not. Empty if it
+# can't be computed: everything runs and nothing is stamped.
+key=
+# shellcheck disable=SC2016 # $f expands in the inner shell
+git ls-files -z -co --exclude-from=.gitignore |
+  xargs -0 sh -c 'for f; do [ -e "$f" ] && printf "%s\0" "$f"; done' sh >"$out/files" &&
+  xargs -0 git hash-object --no-filters -- <"$out/files" >"$out/hashes" &&
+  { cat node_modules/.package-lock.json "$out/files" "$out/hashes" && node --version; } >"$out/inputs" &&
+  key=$(git hash-object --no-filters "$out/inputs") ||
+  key=
 
-# check <name> <pathspecs> <command>...
+# check <name> <command>...
 check() {
   name=$1
-  # shellcheck disable=SC2086 # splits the pathspecs, globbing is off
-  stamp=$stamps/$(key "$1" $2)
-  shift 2
-  if [ -e "$stamp" ]; then
+  shift
+  stamp=$stamps/$name-$key
+  if [ -n "$key" ] && [ -e "$stamp" ]; then
     touch "$stamp" "$out/$name.skipped"
   elif "$@" >"$out/$name" 2>&1; then
-    touch "$stamp"
+    [ -z "$key" ] || touch "$stamp"
   else
     return 1
   fi
 }
 
-check format '.' prettier --check . --cache &
+check format prettier --check . --cache &
 format=$!
-check lint '*.js *.cjs *.mjs .gitignore package.json' node --run lint &
+check lint node --run lint &
 lint=$!
-# Tests read only JS files and package.json: widen this if they read others.
-check test '*.js *.cjs *.mjs package.json' node --run test &
+check test node --run test &
 test=$!
 
 status=0
