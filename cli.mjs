@@ -2,7 +2,7 @@
 
 import { join } from "node:path";
 import { load as loadConfig } from "app-conf";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, writeFile } from "node:fs/promises";
 import pkg from "./package.json" with { type: "json" };
 import { parseArgs } from "node:util";
 
@@ -12,12 +12,15 @@ import {
   compileTextTemplate,
   createGlobMatcher,
   createMailer,
+  deliveryReason,
+  dependsOnTarget,
   draw,
   excludePairs,
   hideTarget,
   messageTemplates,
   namePattern,
   parsePlayers,
+  recordDelivery,
   shellQuote,
   unmatchedPatterns,
   unreachablePlayers,
@@ -98,6 +101,24 @@ const parseFile = (path, parse) => (content) => {
   }
 };
 
+// Undefined if the file does not exist.
+const readOptionalJson = (path) =>
+  readFile(path).then(parseFile(path, JSON.parse), (error) => {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  });
+
+// Through a temporary file in the same directory (a rename across file
+// systems fails): an interruption cannot leave it truncated.
+const writeJson = async (path, value) => {
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, JSON.stringify(value, null, 2));
+  await rename(tmp, path);
+};
+
+const sentPath = (gameDir) => join(gameDir, "sent.json");
+
 // Returns the players and the lottery (undefined if not drawn yet).
 const readGame = async (gameDir) => {
   const playersPath = join(gameDir, "players.json5");
@@ -105,14 +126,7 @@ const readGame = async (gameDir) => {
     players: await readFile(playersPath).then(
       parseFile(playersPath, parsePlayers),
     ),
-    lottery: await readFile(lotteryPath(gameDir)).then(
-      parseFile(lotteryPath(gameDir), JSON.parse),
-      (error) => {
-        if (error.code !== "ENOENT") {
-          throw error;
-        }
-      },
-    ),
+    lottery: await readOptionalJson(lotteryPath(gameDir)),
   };
 };
 
@@ -349,8 +363,9 @@ async function send(config, args) {
           .join(", ")})`,
   );
 
-  const [{ players, lottery }, templates] = await Promise.all([
+  const [{ players, lottery }, sent, templates] = await Promise.all([
     readGame(gameDir),
+    readOptionalJson(sentPath(gameDir)).then((sent = {}) => sent),
     Promise.all(
       channels.map(async (channel) => {
         const path = join(gameDir, files[channel]);
@@ -363,12 +378,40 @@ async function send(config, args) {
   ]);
 
   const isSelected = createPlayerMatcher(players, patterns, { force });
+  // Include patterns name players to send to even if already sent; `!`
+  // patterns only filter.
+  const includes = patterns
+    .filter((pattern) => pattern[0] !== "!")
+    .map((pattern) => pattern.toLowerCase());
+  const matchesInclude = createGlobMatcher(includes);
+  const isResent = (player) =>
+    includes.length !== 0 && matchesInclude(player.displayName.toLowerCase());
+
   const sortedPlayers = sortByDisplayName(players);
   const hiddenTarget = hideTarget(players);
+  const messageSent = sent[message] ?? {};
   const deliveries = [];
-  const failures = new Set();
   const inPerson = [];
+  const failures = new Set();
   let selected = 0;
+  let alreadySent = 0;
+  let lastSent = "";
+
+  // Adds `delivery` to `list` if pending, else counts it as already sent.
+  const addIfPending = (list, delivery) => {
+    const reason = deliveryReason(messageSent, delivery, {
+      resend: isResent(delivery.player),
+    });
+    if (reason === undefined) {
+      ++alreadySent;
+      const { date } = messageSent[delivery.playerId][delivery.channel];
+      if (date > lastSent) {
+        lastSent = date;
+      }
+    } else {
+      list.push({ ...delivery, reason });
+    }
+  };
 
   for (const player of sortedPlayers) {
     const name = player.displayName;
@@ -376,19 +419,6 @@ async function send(config, args) {
       continue;
     }
     ++selected;
-
-    const reachable = channels.filter(
-      (channel) => player[CHANNELS[channel].contact] !== undefined,
-    );
-    if (reachable.length === 0) {
-      if (player.inPerson) {
-        inPerson.push(player);
-      } else {
-        console.error("%s: %s", name, unreachableReason(player, message));
-        failures.add(name);
-      }
-      continue;
-    }
 
     // Without a lottery, messages are announcements without targets.
     let target;
@@ -400,18 +430,48 @@ async function send(config, args) {
         continue;
       }
     }
+    const renderer = (channel) => (target) =>
+      templates[channel]({ player, players: sortedPlayers, target });
+    const delivery = (channel, dependent) => ({
+      player,
+      playerId: player.id,
+      channel,
+      contact: player[CHANNELS[channel]?.contact],
+      target: dependent ? target.id : undefined,
+    });
+
+    const reachable = channels.filter(
+      (channel) => player[CHANNELS[channel].contact] !== undefined,
+    );
+    if (reachable.length === 0) {
+      if (player.inPerson) {
+        // Any template tells whether the message is about the target.
+        const dependent = (() => {
+          try {
+            return dependsOnTarget(renderer(channels[0]), target);
+          } catch {
+            return true;
+          }
+        })();
+        addIfPending(inPerson, delivery("inPerson", dependent));
+      } else {
+        console.error("%s: %s", name, unreachableReason(player, message));
+        failures.add(name);
+      }
+      continue;
+    }
 
     for (const channel of reachable) {
-      const render = (target) =>
-        templates[channel]({ player, players: sortedPlayers, target });
+      const render = renderer(channel);
       try {
         // Rendered with the real target even if hidden: it can fail where
         // the hidden one would not.
         let content = render(target);
+        const dependent = dependsOnTarget(render, target);
         if (target !== undefined && !force && !show) {
           content = render(hiddenTarget);
         }
-        deliveries.push({ player, channel, content });
+        addIfPending(deliveries, { ...delivery(channel, dependent), content });
       } catch (error) {
         // The details could tell which fields the target has.
         console.error(
@@ -438,6 +498,26 @@ async function send(config, args) {
     throw "nothing sent, fix the errors above";
   }
 
+  // Recorded after each sending, so that a failure or an interruption
+  // keeps the others.
+  let records = sent;
+  const record = async (delivery) => {
+    records = {
+      ...records,
+      [message]: recordDelivery(
+        records[message] ?? {},
+        delivery,
+        new Date().toISOString().slice(0, 10),
+      ),
+    };
+    try {
+      await writeJson(sentPath(gameDir), records);
+    } catch (error) {
+      // eslint-disable-next-line no-throw-literal
+      throw `${delivery.player.displayName}: sent but not recorded in sent.json (${error.message}): stopped, else the next run sends it again`;
+    }
+  };
+
   if (force) {
     const senders = {};
     for (const channel of channels) {
@@ -451,23 +531,26 @@ async function send(config, args) {
         );
       }
     }
-    for (const { player, channel, content } of deliveries) {
-      const name = player.displayName;
+    for (const delivery of deliveries) {
+      const name = delivery.player.displayName;
       try {
-        await senders[channel](player, content);
-        console.log("%s: sent to %s", name, player[CHANNELS[channel].contact]);
+        await senders[delivery.channel](delivery.player, delivery.content);
       } catch (error) {
         console.error("%s: failed: %s", name, error.message);
         failures.add(name);
+        continue;
       }
+      console.log("%s: sent to %s", name, delivery.contact);
+      await record(delivery);
     }
   } else {
-    for (const { player, channel, content } of deliveries) {
+    for (const { player, channel, contact, content, reason } of deliveries) {
       console.log(
-        "--- %s to %s (%s)\n%s\n",
+        "--- %s to %s (%s) [%s]\n%s\n",
         CHANNELS[channel].label,
         player.displayName,
-        player[CHANNELS[channel].contact],
+        contact,
+        reason,
         CHANNELS[channel].format(content),
       );
     }
@@ -475,16 +558,31 @@ async function send(config, args) {
 
   if (inPerson.length !== 0) {
     // When sending, the organizer is telling everyone: no need to hide.
-    const target = (player) =>
-      (force || show) && players[lottery?.[player.id]]?.displayName;
     console.log(
       "to tell in person: %s",
       inPerson
-        .map((player) =>
-          [player.displayName, target(player)].filter(Boolean).join(" → "),
+        .map(({ player, target }) =>
+          force || show
+            ? [player.displayName, players[target]?.displayName]
+                .filter(Boolean)
+                .join(" → ")
+            : player.displayName,
         )
         .join(", "),
     );
+    if (force) {
+      for (const delivery of inPerson) {
+        await record(delivery);
+      }
+    }
+  }
+
+  if (alreadySent !== 0) {
+    console.log("%d already sent, last on %s", alreadySent, lastSent);
+  }
+  if (deliveries.length === 0 && inPerson.length === 0 && failures.size === 0) {
+    console.log("nothing to send (to resend: add '*' or names)");
+    return;
   }
 
   if (failures.size !== 0) {

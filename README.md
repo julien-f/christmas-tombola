@@ -29,11 +29,12 @@ SMS messages are sent through an Android phone running [SMS Gate](https://sms-ga
 2. Optionally, announce the game: `christmas-tombola send games/2026 announce` shows the messages (dry run); add `--force` to send them.
 3. `christmas-tombola draw games/2026`.
 4. `christmas-tombola send games/2026 targets`, then with `--force`; it ends with the in-person players to tell and their targets.
-5. After editing the players, `draw` again and send to the players it lists: `christmas-tombola send games/2026 targets 'alice' 'grace' --force`.
+5. After editing the players, `draw` again, then `send games/2026 targets` (dry run, then `--force`): only the new players and those whose target changed get it.
+6. Any other message, any time: e.g. `reminder.email.md` and `reminder.sms.txt`, then `send games/2026 reminder`.
 
 ## Next year
 
-1. A new directory with the players and messages, without `lottery.json` (`draw` would keep last year's pairs): `mkdir games/2027 && cp games/2026/{players.json5,*.email.md,*.sms.txt} games/2027/`.
+1. A new directory with the players and messages, without `lottery.json` (`draw` would keep last year's pairs) nor `sent.json` (nothing would be sent): `mkdir games/2027 && cp games/2026/{players.json5,*.email.md,*.sms.txt} games/2027/`.
 2. `christmas-tombola draw games/2027 --avoid games/2026`: nobody gets last year's target. Pass `--avoid` on every `draw` of that game; in a small game, it leaves few draws (3 players: only the reverse of last year).
 
 ## Players
@@ -63,7 +64,8 @@ christmas-tombola sms-test <phone> [<message>]
 - Rerunning `draw` keeps existing pairs: it redraws only pairs that involve a removed player or break a new group, inserts new players, and lists the players whose target changed.
 - `dump` prints the players as read from `players.json5`, with their targets under `--show`: `dump games/2026 heidi --show` shows only Heidi's.
 - `send` sends a message (see [Messages](#messages)) to each selected player, on every channel they have:
-  - without `--force` (`-f`), it does a _dry run_: prints the messages, sends nothing;
+  - only what is not sent yet (see [Sent messages](#sent-messages)), or to the players named by include patterns even if already sent (`'*'`: everyone);
+  - without `--force` (`-f`), it does a _dry run_: prints the messages and why each is sent, sends nothing;
   - a player no channel reaches is an error, unless `inPerson`: then listed as to tell in person, with their target when sending or under `--show`;
   - it sends nothing if any message fails to render;
   - it lists the players whose sending failed with the command to retry them, and exits with code 1.
@@ -82,6 +84,16 @@ A missing field is an error, not an empty string: put optional fields in `{{#if 
 
 - Email: Markdown body, sent as text and HTML. Nodemailer fields go in a [TOML](https://toml.io/) front matter between `+++` lines. The recipient is always the player. See [`examples/targets.email.md`](examples/targets.email.md), and [`examples/announce.email.md`](examples/announce.email.md) for before the draw.
 - SMS: plain text, see [`examples/targets.sms.txt`](examples/targets.sms.txt) and [`examples/announce.sms.txt`](examples/announce.sms.txt).
+
+## Sent messages
+
+`send --force` records each message sent, and each in-person player listed, in `sent.json`. A message is sent again only:
+
+- to a new player, or to a new email or phone (reformatting it counts);
+- after a new target, if the message depends on it (renders differently without it): a reminder doesn't, the targets message does;
+- to players named by include patterns, e.g. after fixing a template: editing it, or the other players' details, resends nothing by itself.
+
+A sending whose outcome is unknown (timeout) is not recorded: the next run may send it twice, as would two `send --force` at once.
 
 ## License
 

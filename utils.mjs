@@ -142,6 +142,56 @@ export function messageTemplates(fileNames, message) {
   return templates;
 }
 
+// Whether `render(target)` (a message for a player) depends on the
+// target: differs without it, or fails without it (strict mode).
+export function dependsOnTarget(render, target) {
+  if (target === undefined) {
+    return false;
+  }
+  let without;
+  try {
+    without = render(undefined);
+  } catch {
+    return true;
+  }
+  // Mail renders to an object: fields, text and HTML.
+  return JSON.stringify(render(target)) !== JSON.stringify(without);
+}
+
+const CONTACT_NAMES = { email: "email", sms: "phone" };
+
+// Why `delivery` (`{ playerId, channel, contact, target }`, `target` an
+// id set only if the message depends on it) is to send, given `sent`,
+// the records of this message (see `recordDelivery`); undefined if
+// already sent, unless `resend`.
+export function deliveryReason(
+  sent,
+  { playerId, channel, contact, target },
+  { resend = false } = {},
+) {
+  const record = sent[playerId]?.[channel];
+  if (record === undefined) {
+    return "new";
+  }
+  if (record.contact !== contact) {
+    return `new ${CONTACT_NAMES[channel]}`;
+  }
+  if (target !== undefined && record.target !== target) {
+    return "new target";
+  }
+  return resend ? "resend" : undefined;
+}
+
+// Returns `sent` (by player id, then channel) with `delivery` recorded.
+export const recordDelivery = (
+  sent,
+  { playerId, channel, contact, target },
+  date,
+) => ({
+  ...sent,
+  [playerId]: { ...sent[playerId], [channel]: { contact, target, date } },
+});
+
 // Patterns (with their `!`) matching none of `entries`: likely typos.
 export const unmatchedPatterns = (patterns, entries) =>
   patterns.filter((pattern) => {

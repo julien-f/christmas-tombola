@@ -6,12 +6,15 @@ import {
   compileMailTemplate,
   compileTextTemplate,
   createGlobMatcher,
+  deliveryReason,
+  dependsOnTarget,
   draw,
   excludePairs,
   hideTarget,
   messageTemplates,
   parsePlayers,
   namePattern,
+  recordDelivery,
   shellQuote,
   unmatchedPatterns,
   unreachablePlayers,
@@ -495,6 +498,109 @@ describe("messageTemplates", () => {
       () => messageTemplates(files, "target"),
       /no target\.email\.md or target\.sms\.txt; messages here: announce, targets, targets\.v2/,
     );
+  });
+});
+
+describe("dependsOnTarget", () => {
+  const target = { displayName: "Bob" };
+  const depends = (source, compile = compileTextTemplate) =>
+    dependsOnTarget((target) => compile(source)({ target }), target);
+
+  it("is true when the rendering uses the target", () => {
+    assert(depends("for {{target.displayName}}"));
+    assert(depends("{{#if target}}drawn{{/if}}"));
+    assert(
+      depends(
+        "+++\nsubject = '{{target.displayName}}'\n+++\nhi",
+        compileMailTemplate,
+      ),
+    );
+  });
+
+  it("is false otherwise, or without a target", () => {
+    assert(!depends("on December 25"));
+    assert(!depends("+++\nsubject = 'hi'\n+++\nhi", compileMailTemplate));
+    assert(!dependsOnTarget(() => "hi", undefined));
+  });
+});
+
+describe("deliveryReason", () => {
+  const sent = {
+    alice: {
+      email: { contact: "a@x", target: "bob", date: "2026-12-01" },
+      sms: { contact: "+1", date: "2026-12-01" },
+    },
+  };
+  const reason = (delivery, options) =>
+    deliveryReason(sent, { playerId: "alice", ...delivery }, options);
+
+  it("is undefined when already sent", () => {
+    assert.equal(
+      reason({ channel: "email", contact: "a@x", target: "bob" }),
+      undefined,
+    );
+    assert.equal(reason({ channel: "sms", contact: "+1" }), undefined);
+    // A record's target is ignored when the message no longer depends on it.
+    assert.equal(reason({ channel: "email", contact: "a@x" }), undefined);
+  });
+
+  it("tells why it is pending", () => {
+    assert.equal(
+      reason({ channel: "email", contact: "a@x", target: "carol" }),
+      "new target",
+    );
+    // Sent without target, before the draw.
+    assert.equal(
+      reason({ channel: "sms", contact: "+1", target: "bob" }),
+      "new target",
+    );
+    assert.equal(
+      reason({ channel: "email", contact: "b@x", target: "bob" }),
+      "new email",
+    );
+    assert.equal(reason({ channel: "sms", contact: "+2" }), "new phone");
+    assert.equal(reason({ channel: "inPerson" }), "new");
+    assert.equal(
+      deliveryReason(sent, {
+        playerId: "dan",
+        channel: "email",
+        contact: "d@x",
+      }),
+      "new",
+    );
+  });
+
+  it("resends when asked", () => {
+    assert.equal(
+      reason({ channel: "sms", contact: "+1" }, { resend: true }),
+      "resend",
+    );
+    assert.equal(
+      reason({ channel: "sms", contact: "+2" }, { resend: true }),
+      "new phone",
+    );
+  });
+});
+
+describe("recordDelivery", () => {
+  it("records a delivery without changing the others", () => {
+    const sent = { alice: { email: { contact: "a@x", date: "2026-11-01" } } };
+    assert.deepEqual(
+      recordDelivery(
+        sent,
+        { playerId: "alice", channel: "sms", contact: "+1", target: "bob" },
+        "2026-12-01",
+      ),
+      {
+        alice: {
+          email: { contact: "a@x", date: "2026-11-01" },
+          sms: { contact: "+1", target: "bob", date: "2026-12-01" },
+        },
+      },
+    );
+    assert.deepEqual(sent, {
+      alice: { email: { contact: "a@x", date: "2026-11-01" } },
+    });
   });
 });
 
