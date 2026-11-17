@@ -56,7 +56,7 @@ christmas-tombola sms-test <phone> [<message>]
 
 A missing field is an error, not an empty string: put optional fields in `{{#if player.phone}}…{{/if}}`, and `target` in `{{#if target}}…{{/if}}` in templates also sent before the draw.
 
-- Email: Markdown body (sent as text and HTML), Nodemailer fields in the front matter; the recipient is always the player. See [`examples/email.md`](examples/email.md), and [`examples/announce.md`](examples/announce.md) for before the draw.
+- Email: Markdown body (sent as text and HTML), Nodemailer fields in the front matter; the recipient is always the player. Quote a field starting with `{{` (`subject: "{{player.name}}, your draw"`), else YAML reads an object. See [`examples/email.md`](examples/email.md), and [`examples/announce.md`](examples/announce.md) for before the draw.
 - SMS: plain text, see [`examples/sms.txt`](examples/sms.txt).
 
 ## License
