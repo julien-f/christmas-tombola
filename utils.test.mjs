@@ -8,6 +8,8 @@ import {
   draw,
   hideTarget,
   parsePlayers,
+  namePattern,
+  shellQuote,
   unreachablePlayers,
 } from "./utils.mjs";
 
@@ -422,6 +424,21 @@ describe("createGlobMatcher", () => {
     assert.deepEqual(select(["tom & *"]), ["tom & jerry"]);
   });
 
+  it("selects a name from its pattern", () => {
+    for (const name of [
+      "Alice (junior)",
+      "a*b",
+      "[x]",
+      "!bob",
+      "{a,b}",
+      "O'Neil",
+      "Zoé",
+    ]) {
+      const pattern = namePattern(name).toLowerCase();
+      assert(createGlobMatcher([pattern])(name.toLowerCase()), pattern);
+    }
+  });
+
   it("excludes names matching a `!` pattern", () => {
     assert.deepEqual(select(["!alice*"]), ["bob", "tom & jerry"]);
     assert.deepEqual(select(["a*", "!alice"]), ["alice (junior)"]);
@@ -461,6 +478,14 @@ describe("compileMailTemplate", () => {
       () => compileMailTemplate("{{player.nmae}}")(context),
       /"nmae" not defined/,
     );
+  });
+});
+
+describe("shellQuote", () => {
+  it("quotes for a POSIX shell", () => {
+    assert.equal(shellQuote("O'Neil $x"), `'O'\\''Neil $x'`);
+    assert.equal(shellQuote("games/2026"), "games/2026");
+    assert.equal(shellQuote(""), "''");
   });
 });
 

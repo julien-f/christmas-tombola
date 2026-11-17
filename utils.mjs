@@ -69,6 +69,16 @@ export function createGlobMatcher(patterns) {
     (include.length === 0 || matches(entry, include));
 }
 
+// A pattern selecting `name`. Other characters become `?`: escaping glob
+// syntax (`!`, braces…) does not work reliably.
+export const namePattern = (name) => name.replace(/[^\p{L}\p{N} .'_-]/gu, "?");
+
+// For a POSIX shell.
+export const shellQuote = (string) =>
+  /^[\w./+=-]+$/.test(string) ? string : `'${string.replaceAll("'", `'\\''`)}'`;
+
+// -------------------------------------------------------------------
+
 // A target for dry runs: every field any player has, so that a typo
 // still fails, all "[target]", so that nothing about the real target
 // shows.
