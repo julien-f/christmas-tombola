@@ -78,7 +78,8 @@ export async function createMailer({ transport: transportConfig, ...config }) {
 // -------------------------------------------------------------------
 
 // Uniform sampling is tried first so that every valid draw is equally
-// likely; the bounded search handles heavily constrained games.
+// likely; the bounded search, not uniform, handles heavily constrained
+// games (e.g. a group of a third of the players).
 const MAX_SAMPLING_TRIES = 1e4;
 const MAX_SEARCH_STEPS = 1e6;
 
@@ -118,28 +119,48 @@ export function draw(players, previous = {}, { random = Math.random } = {}) {
   const ids = Object.keys(players);
   const sources = ids.filter((id) => !(id in lottery));
   const targets = ids.filter((id) => !targeted.has(id));
-  const notify = new Set(sources);
 
+  // The matching rules out impossible fills before sampling them.
   const fill = () =>
-    sampleAssignment(sources, targets, lottery, canDraw, random) ||
-    searchAssignment(sources, targets, lottery, canDraw, random);
+    hasMatching(sources, targets, canDraw) &&
+    (sampleAssignment(sources, targets, lottery, canDraw, random) ||
+      searchAssignment(sources, targets, lottery, canDraw, random));
 
-  // Release existing pairs one at a time until the open slots can be
-  // filled, e.g. a new player N and a released A → B give A → N → B.
-  const kept = Object.keys(lottery);
-  shuffleArray(kept, random);
-  while (!fill()) {
-    const source = kept.pop();
-    if (source === undefined) {
-      throw new Error("no valid draw exists");
-    }
+  const release = (source) => {
     sources.push(source);
     targets.push(lottery[source]);
     delete lottery[source];
-    notify.add(source);
+  };
+  const releaseAlone = (source) => {
+    const target = lottery[source];
+    release(source);
+    if (fill()) {
+      return true;
+    }
+    sources.pop();
+    targets.pop();
+    lottery[source] = target;
+    return false;
+  };
+
+  // If the open slots cannot be filled, release a single existing pair if
+  // that suffices (e.g. a new player N and a released A → B give
+  // A → N → B), otherwise pairs one at a time until it does.
+  const kept = Object.keys(lottery);
+  shuffleArray(kept, random);
+  if (!fill() && !kept.some(releaseAlone)) {
+    do {
+      const source = kept.pop();
+      if (source === undefined) {
+        throw new Error("no valid draw exists");
+      }
+      release(source);
+    } while (!fill());
   }
 
-  return { lottery, dropped, notify: [...notify] };
+  // A released pair can be drawn again.
+  const notify = ids.filter((id) => lottery[id] !== previous[id]);
+  return { lottery, dropped, notify };
 }
 
 function sampleAssignment(sources, targets, result, canDraw, random) {
@@ -160,12 +181,8 @@ function sampleAssignment(sources, targets, result, canDraw, random) {
 }
 
 // Depth-first search, assigning first the source with the fewest
-// candidates.
+// candidates and pruning branches without a matching.
 function searchAssignment(sources, targets, result, canDraw, random) {
-  if (!hasMatching(sources, targets, canDraw)) {
-    return false;
-  }
-
   const remaining = new Set(sources);
   const free = new Set(targets);
   let steps = 0;
@@ -192,7 +209,8 @@ function searchAssignment(sources, targets, result, canDraw, random) {
       }
       result[source] = target;
       free.delete(target);
-      if (search()) {
+      // Checked after the assignment so that its reciprocity counts.
+      if (hasMatching([...remaining], [...free], canDraw) && search()) {
         return true;
       }
       free.add(target);
@@ -206,8 +224,7 @@ function searchAssignment(sources, targets, result, canDraw, random) {
 }
 
 // Whether each source can get a distinct target, ignoring reciprocity
-// (Kuhn's augmenting paths): rules out impossible games before the
-// exponential search.
+// (Kuhn's augmenting paths).
 function hasMatching(sources, targets, canDraw) {
   const owner = new Map();
   const augment = (source, seen) => {
