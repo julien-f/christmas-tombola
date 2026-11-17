@@ -146,6 +146,16 @@ const COMMANDS = Object.freeze({
         dropped.length,
         show ? ": " + dropped.map((pair) => pair.join(" → ")).join(", ") : "",
       );
+      const gone = [
+        ...new Set(dropped.flat().filter((id) => !(id in players))),
+      ];
+      if (gone.length !== 0) {
+        console.warn(
+          "left the game or renamed: %s (to rename without redrawing, keep the old id: `id: %s`)",
+          gone.join(", "),
+          JSON.stringify(gone[0]),
+        );
+      }
     }
     if (previous !== undefined) {
       console.log(
