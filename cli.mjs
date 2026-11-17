@@ -5,23 +5,29 @@ import { load as loadConfig } from "app-conf";
 import { readFile, writeFile } from "node:fs/promises";
 import pkg from "./package.json" with { type: "json" };
 import { parseArgs } from "node:util";
-import Handlebars from "handlebars";
 
 import {
   compileMailTemplate,
+  compileTextTemplate,
   createGlobMatcher,
   createMailer,
   draw,
+  hideTarget,
+  namePattern,
   parsePlayers,
+  shellQuote,
+  unreachablePlayers,
 } from "./utils.mjs";
-import { sendSms } from "./_sendSms.mjs";
+import { sendSms, smsSegments } from "./_sendSms.mjs";
+
+// Android's default limit, per 30 minutes.
+const SMS_LIMIT = 30;
 
 // ===================================================================
 
 function requireArg(name) {
-  const message = `Missing argument: ${name}`;
-
-  throw message;
+  // eslint-disable-next-line no-throw-literal
+  throw `missing argument: ${name}`;
 }
 
 function requireConfig(config, key) {
@@ -55,15 +61,34 @@ const sortByDisplayName = (players) =>
 
 const lotteryPath = (gameDir) => join(gameDir, "lottery.json");
 
+// Returns `parse(content)`; its errors are the user's to fix: no stack
+// trace, but the file.
+const parseFile = (path, parse) => (content) => {
+  try {
+    return parse(content);
+  } catch (error) {
+    // eslint-disable-next-line no-throw-literal
+    throw `${path}: ${error.message}`;
+  }
+};
+
 // Returns the players and the lottery (undefined if not drawn yet).
-const readGame = async (gameDir) => ({
-  players: parsePlayers(await readFile(join(gameDir, "players.json5"))),
-  lottery: await readFile(lotteryPath(gameDir)).then(JSON.parse, (error) => {
-    if (error.code !== "ENOENT") {
-      throw error;
-    }
-  }),
-});
+const readGame = async (gameDir) => {
+  const playersPath = join(gameDir, "players.json5");
+  return {
+    players: await readFile(playersPath).then(
+      parseFile(playersPath, parsePlayers),
+    ),
+    lottery: await readFile(lotteryPath(gameDir)).then(
+      parseFile(lotteryPath(gameDir), JSON.parse),
+      (error) => {
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
+      },
+    ),
+  };
+};
 
 // -------------------------------------------------------------------
 
@@ -75,6 +100,15 @@ const COMMANDS = Object.freeze({
     } = parseCommandArgs(args);
 
     const { players, lottery: previous } = await readGame(gameDir);
+
+    const unreachable = unreachablePlayers(players);
+    if (unreachable.length !== 0) {
+      // eslint-disable-next-line no-throw-literal
+      throw `neither email nor phone for: ${unreachable
+        .map((player) => player.displayName)
+        .join(", ")} (set \`inPerson: true\` to tell them in person)`;
+    }
+
     const { lottery, dropped, notify } = draw(players, previous);
 
     if (dropped.length !== 0) {
@@ -130,6 +164,7 @@ const COMMANDS = Object.freeze({
 
   async email(args) {
     await sendToPlayers(args, {
+      command: "email",
       contact: "email",
       compile: compileMailTemplate,
       format: ({ subject, text }) => `Subject: ${subject}\n\n${text}`,
@@ -149,11 +184,28 @@ const COMMANDS = Object.freeze({
 
   async sms(args) {
     await sendToPlayers(args, {
+      command: "sms",
       contact: "phone",
-      compile: (source) => Handlebars.compile(source, { noEscape: true }),
-      format: (message) => message,
-      createSender: () => {
+      compile: compileTextTemplate,
+      format: (message) => {
+        const { count, nonGsm } = smsSegments(message);
+        return `${message}\n(~${count} SMS${
+          nonGsm === undefined ? "" : `, shorter because of "${nonGsm}"`
+        })`;
+      },
+      createSender: (messages) => {
         const config = requireConfig(this.config, "sms");
+        const total = messages.reduce(
+          (sum, message) => sum + smsSegments(message).count,
+          0,
+        );
+        if (total > SMS_LIMIT) {
+          console.warn(
+            "%d SMS: past %d in 30 minutes, Android asks on the phone to allow more",
+            total,
+            SMS_LIMIT,
+          );
+        }
         return (player, message) => sendSms(config, player.phone, message);
       },
     });
@@ -167,35 +219,23 @@ const COMMANDS = Object.freeze({
       ],
     } = parseCommandArgs(args);
 
-    await sendSms(requireConfig(this.config, "sms"), phone, message);
+    try {
+      await sendSms(requireConfig(this.config, "sms"), phone, message);
+    } catch (error) {
+      // What this command checks, not a bug: no stack trace.
+      throw error.message;
+    }
     return `sent to ${phone}`;
   },
 });
 
-// Every field is "[target]", even those the real target lacks, so that
-// dry runs reveal nothing about it.
-const HIDDEN_TARGET = new Proxy(
-  {},
-  {
-    get: (_, key) =>
-      key === Symbol.toPrimitive
-        ? () => "[target]"
-        : typeof key === "string" && key !== "toHTML"
-          ? "[target]"
-          : undefined,
-    // Handlebars only reads own properties.
-    getOwnPropertyDescriptor: () => ({
-      value: "[target]",
-      configurable: true,
-      enumerable: true,
-    }),
-  },
-);
-
-// Renders the template for each selected player and sends it, one at a
-// time, if `--force`; otherwise prints it, with targets hidden unless
-// `--show`.
-async function sendToPlayers(args, { contact, compile, format, createSender }) {
+// Renders the template for every selected player, then, if all succeed
+// and `--force`, sends them one at a time; otherwise prints them, with
+// targets hidden unless `--show`.
+async function sendToPlayers(
+  args,
+  { command, contact, compile, format, createSender },
+) {
   const {
     values: { force, show },
     positionals: [
@@ -207,13 +247,13 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
 
   const [{ players, lottery }, template] = await Promise.all([
     readGame(gameDir),
-    readFile(templateFile, "utf8").then(compile),
+    readFile(templateFile, "utf8").then(parseFile(templateFile, compile)),
   ]);
 
-  // `send(player, message)`, created upfront to check the configuration.
-  const send = force ? await createSender() : undefined;
   const isSelected = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
   const sortedPlayers = sortByDisplayName(players);
+  const hiddenTarget = hideTarget(players);
+  const messages = [];
   const failures = [];
   let selected = 0;
 
@@ -238,28 +278,27 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
         failures.push(name);
         continue;
       }
-      if (!force && !show) {
-        target = HIDDEN_TARGET;
-      }
     }
 
-    const message = template({ player, players: sortedPlayers, target });
-
-    if (!force) {
-      console.log(
-        "--- to %s (%s)\n%s\n",
-        name,
-        player[contact],
-        format(message),
-      );
-      continue;
-    }
-
+    const render = (target) =>
+      template({ player, players: sortedPlayers, target });
     try {
-      await send(player, message);
-      console.log("%s: sent to %s", name, player[contact]);
+      // Rendered with the real target even if hidden: it can fail where
+      // the hidden one would not.
+      let message = render(target);
+      if (target !== undefined && !force && !show) {
+        message = render(hiddenTarget);
+      }
+      messages.push({ player, message });
     } catch (error) {
-      console.error("%s: failed: %s", name, error.message);
+      // The details could tell which fields the target has.
+      console.error(
+        "%s: %s",
+        name,
+        show
+          ? `${templateFile}: ${error.message}`
+          : "template error, use --show for details",
+      );
       failures.push(name);
     }
   }
@@ -268,8 +307,48 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
     // eslint-disable-next-line no-throw-literal
     throw "no player selected";
   }
+
+  if (force && failures.length !== 0) {
+    // eslint-disable-next-line no-throw-literal
+    throw "nothing sent, fix the errors above";
+  }
+
+  if (force) {
+    // `send(player, message)`, created before sending any to check the
+    // configuration.
+    const send = await createSender(messages.map(({ message }) => message));
+    for (const { player, message } of messages) {
+      const name = player.displayName;
+      try {
+        await send(player, message);
+        console.log("%s: sent to %s", name, player[contact]);
+      } catch (error) {
+        console.error("%s: failed: %s", name, error.message);
+        failures.push(name);
+      }
+    }
+  } else {
+    for (const { player, message } of messages) {
+      console.log(
+        "--- to %s (%s)\n%s\n",
+        player.displayName,
+        player[contact],
+        format(message),
+      );
+    }
+  }
+
   if (failures.length !== 0) {
-    console.error("not sent to: %s", failures.join(", "));
+    console.error("failed for: %s", failures.join(", "));
+    if (force) {
+      console.error(
+        "to retry them: %s",
+        [pkg.name, command, gameDir, templateFile, "--force"]
+          .concat(failures.map(namePattern))
+          .map(shellQuote)
+          .join(" "),
+      );
+    }
     process.exitCode = 1;
   } else if (!force) {
     console.log("dry run: nothing sent, use --force to send");
@@ -291,15 +370,20 @@ Commands:
 Options:
   --show       show targets (hidden by default)
   -f, --force  email, sms: really send (only printed by default)
-  -h, --help   show this help (as <command>)
+  -h, --help   show this help
 
 ${pkg.name} v${pkg.version}
 `;
 
-async function main([commandName, ...commandArgs]) {
-  if (commandName === "-h" || commandName === "--help") {
+async function main(args) {
+  // Before `--`, after which `-h` is a pattern.
+  const end = args.indexOf("--");
+  const options = end === -1 ? args : args.slice(0, end);
+  if (options.includes("-h") || options.includes("--help")) {
     return help;
   }
+
+  const [commandName, ...commandArgs] = args;
 
   if (!commandName) {
     // eslint-disable-next-line no-throw-literal
@@ -335,7 +419,8 @@ main(process.argv.slice(2)).then(
     }
   },
   (error) => {
-    console.error(error);
+    // A system error (file not found…) is the user's to fix: no stack trace.
+    console.error(error?.syscall === undefined ? error : error.message);
     process.exitCode = 1;
   },
 );

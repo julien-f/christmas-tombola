@@ -1,23 +1,55 @@
 import { marked } from "marked";
-import frontMatter from "front-matter";
 import handlebars from "handlebars";
 import JSON5 from "json5";
 import { matchesGlob } from "node:path";
 import nodemailer from "nodemailer";
+import { parse as parseToml } from "smol-toml";
 
 // ===================================================================
 
-// Applies `fn` to every leaf of a JSON-like value.
+const isPlainObject = (value) =>
+  value !== null &&
+  typeof value === "object" &&
+  [Object.prototype, null].includes(Object.getPrototypeOf(value));
+
+// Applies `fn` to every leaf of a JSON-like value; other objects (dates…)
+// are leaves.
 function mapLeaves(value, fn) {
   if (Array.isArray(value)) {
     return value.map((item) => mapLeaves(item, fn));
   }
-  if (value !== null && typeof value === "object") {
+  if (isPlainObject(value)) {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, mapLeaves(item, fn)]),
     );
   }
   return fn(value);
+}
+
+// Strict: a missing field throws instead of rendering empty. Parsed now
+// so that syntax errors show up before the first render.
+const compile = (source, options) =>
+  handlebars.compile(handlebars.parse(source), { strict: true, ...options });
+
+export const compileTextTemplate = (source) =>
+  compile(source, { noEscape: true });
+
+// Blank lines after it are not part of the body.
+const FRONT_MATTER = /^\+\+\+\r?\n(?:([^]*?)\r?\n)?\+\+\+(?:\r?\n|$)(?:\r?\n)*/;
+
+// Splits the TOML front matter, between `+++` lines, from the body.
+function parseFrontMatter(source) {
+  if (!/^\+\+\+\r?\n/.test(source)) {
+    return { attributes: {}, body: source };
+  }
+  const match = FRONT_MATTER.exec(source);
+  if (match === null) {
+    throw new Error("front matter not closed by a `+++` line");
+  }
+  return {
+    attributes: parseToml(match[1] ?? ""),
+    body: source.slice(match[0].length),
+  };
 }
 
 // Compiles a mail template: a Markdown body and a front matter of
@@ -26,16 +58,14 @@ function mapLeaves(value, fn) {
 // Returns a function which, given a context, returns Nodemailer data
 // with `text` and `html` parts.
 export function compileMailTemplate(source) {
-  const { attributes, body } = frontMatter(source);
+  const { attributes, body } = parseFrontMatter(source);
 
   const fields = mapLeaves(attributes, (value) =>
-    typeof value === "string"
-      ? handlebars.compile(value, { noEscape: true })
-      : value,
+    typeof value === "string" ? compileTextTemplate(value) : value,
   );
-  const text = handlebars.compile(body, { noEscape: true });
+  const text = compileTextTemplate(body);
   // Escaped values so that names cannot inject HTML.
-  const html = handlebars.compile(body);
+  const html = compile(body);
 
   return (context) => ({
     ...mapLeaves(fields, (value) =>
@@ -61,6 +91,29 @@ export function createGlobMatcher(patterns) {
   return (entry) =>
     !matches(entry, exclude) &&
     (include.length === 0 || matches(entry, include));
+}
+
+// A pattern selecting `name`. Other characters become `?`: escaping glob
+// syntax (`!`, braces…) does not work reliably.
+export const namePattern = (name) => name.replace(/[^\p{L}\p{N} .'_-]/gu, "?");
+
+// For a POSIX shell.
+export const shellQuote = (string) =>
+  /^[\w./+=-]+$/.test(string) ? string : `'${string.replaceAll("'", `'\\''`)}'`;
+
+// -------------------------------------------------------------------
+
+// A target for dry runs: every field any player has, so that a typo
+// still fails, all "[target]", so that nothing about the real target
+// shows.
+export function hideTarget(players) {
+  const hidden = { toString: () => "[target]" };
+  for (const player of Object.values(players)) {
+    for (const key of Object.keys(player)) {
+      hidden[key] = "[target]";
+    }
+  }
+  return hidden;
 }
 
 // -------------------------------------------------------------------
@@ -272,10 +325,6 @@ export function parsePlayers(json) {
     }
     players[id] = entry;
 
-    if (entry.email === undefined && entry.phone === undefined) {
-      console.warn("WARNING: player %s has neither email or phone defined", id);
-    }
-
     groups.forEach((group) => group.push(id));
     playerGroups.set(entry, groups);
   };
@@ -289,6 +338,15 @@ export function parsePlayers(json) {
 
   return players;
 }
+
+// Players who would never learn their target.
+export const unreachablePlayers = (players) =>
+  Object.values(players).filter(
+    (player) =>
+      player.email === undefined &&
+      player.phone === undefined &&
+      player.inPerson !== true,
+  );
 
 // -------------------------------------------------------------------
 

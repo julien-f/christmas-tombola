@@ -1,0 +1,1 @@
+Hi {{player.name}}, this year you give a gift to {{target.displayName}}. Merry Christmas!

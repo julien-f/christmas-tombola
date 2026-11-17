@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
   compileMailTemplate,
+  compileTextTemplate,
   createGlobMatcher,
   draw,
+  hideTarget,
   parsePlayers,
+  namePattern,
+  shellQuote,
+  unreachablePlayers,
 } from "./utils.mjs";
 
 // Deterministic PRNG (mulberry32) so that failures are reproducible.
@@ -92,6 +98,16 @@ describe("parsePlayers", () => {
 
   it("rejects duplicate ids", () => {
     assert.throws(() => makePlayers(["A", "A"]), /duplicate player id: A/);
+  });
+
+  it("lists players without contact, unless told in person", () => {
+    const players = parsePlayers(`[
+      { name: "A", email: "a" },
+      { name: "B", phone: "+1" },
+      { name: "C" },
+      { name: "D", inPerson: true },
+    ]`);
+    assert.deepEqual(unreachablePlayers(players), [players.C]);
   });
 
   it("converts ids to strings", () => {
@@ -409,6 +425,21 @@ describe("createGlobMatcher", () => {
     assert.deepEqual(select(["tom & *"]), ["tom & jerry"]);
   });
 
+  it("selects a name from its pattern", () => {
+    for (const name of [
+      "Alice (junior)",
+      "a*b",
+      "[x]",
+      "!bob",
+      "{a,b}",
+      "O'Neil",
+      "Zoé",
+    ]) {
+      const pattern = namePattern(name).toLowerCase();
+      assert(createGlobMatcher([pattern])(name.toLowerCase()), pattern);
+    }
+  });
+
   it("excludes names matching a `!` pattern", () => {
     assert.deepEqual(select(["!alice*"]), ["bob", "tom & jerry"]);
     assert.deepEqual(select(["a*", "!alice"]), ["alice (junior)"]);
@@ -419,21 +450,138 @@ describe("compileMailTemplate", () => {
   it("renders fields, text and HTML", () => {
     const render = compileMailTemplate(
       [
-        "---",
-        "subject: Gift for {{player.name}}",
-        "bcc: { name: Me, address: me@example.com }",
-        "---",
+        "+++",
+        'subject = "{{player.name}}, your gift"',
+        'bcc = { name = "Me", address = "me@example.com" }',
+        "+++",
+        "",
         "Hi {{player.name}}, you give to **{{target.name}}**.",
       ].join("\n"),
     );
     assert.deepEqual(
       render({ player: { name: "Tom & Jerry" }, target: { name: "<b>A</b>" } }),
       {
-        subject: "Gift for Tom & Jerry",
+        subject: "Tom & Jerry, your gift",
         bcc: { name: "Me", address: "me@example.com" },
         text: "Hi Tom & Jerry, you give to **<b>A</b>**.",
         html: "<p>Hi Tom &amp; Jerry, you give to <strong>&lt;b&gt;A&lt;/b&gt;</strong>.</p>\n",
       },
     );
+  });
+
+  it("rejects missing fields in the front matter and the body", () => {
+    const context = { player: { name: "A" } };
+    assert.throws(
+      () =>
+        compileMailTemplate('+++\nsubject = "{{player.nmae}}"\n+++\n')(context),
+      /"nmae" not defined/,
+    );
+    assert.throws(
+      () => compileMailTemplate("{{player.nmae}}")(context),
+      /"nmae" not defined/,
+    );
+  });
+
+  it("passes non-string fields unchanged", () => {
+    const { date } = compileMailTemplate("+++\ndate = 2026-12-24\n+++\n")({});
+    assert(date instanceof Date);
+    assert.equal(date.toISOString(), "2026-12-24");
+  });
+
+  it("accepts a body without front matter", () => {
+    assert.equal(compileMailTemplate("Hi\n+++\n")({}).text, "Hi\n+++\n");
+    assert.equal(compileMailTemplate("+++ Hi\n")({}).text, "+++ Hi\n");
+  });
+
+  it("rejects an unclosed front matter", () => {
+    assert.throws(() => compileMailTemplate('+++\nsubject = "a"\n'), /\+\+\+/);
+  });
+});
+
+describe("shellQuote", () => {
+  it("quotes for a POSIX shell", () => {
+    assert.equal(shellQuote("O'Neil $x"), `'O'\\''Neil $x'`);
+    assert.equal(shellQuote("games/2026"), "games/2026");
+    assert.equal(shellQuote(""), "''");
+  });
+});
+
+describe("compileTextTemplate", () => {
+  it("rejects missing fields instead of rendering them empty", () => {
+    const render = compileTextTemplate("{{target.nmae}}");
+    assert.throws(
+      () => render({ target: { name: "A" } }),
+      /"nmae" not defined/,
+    );
+  });
+
+  it("rejects a target before the draw", () => {
+    const render = compileTextTemplate("{{target.name}}");
+    assert.throws(() => render({ target: undefined }), /"name" not defined/);
+  });
+
+  it("accepts missing fields in conditions", () => {
+    const render = compileTextTemplate("{{#if target}}{{target.name}}{{/if}}");
+    assert.equal(render({ target: undefined }), "");
+  });
+
+  it("reports syntax errors when compiling", () => {
+    assert.throws(() => compileTextTemplate("{{#if a}}"), /Parse error/);
+  });
+});
+
+describe("hideTarget", () => {
+  const players = makePlayers(["A", "B"]);
+  players.A.disambiguation = "junior";
+  const hidden = hideTarget(players);
+
+  it("has every field any player has, hidden", () => {
+    const render = compileTextTemplate(
+      "{{target}} {{target.displayName}} {{target.disambiguation}}",
+    );
+    assert.equal(render({ target: hidden }), "[target] [target] [target]");
+  });
+
+  it("still rejects unknown fields", () => {
+    const render = compileTextTemplate("{{target.nmae}}");
+    assert.throws(() => render({ target: hidden }), /"nmae" not defined/);
+  });
+});
+
+describe("examples", () => {
+  const read = (file) =>
+    readFileSync(new URL(`examples/${file}`, import.meta.url), "utf8");
+  const players = parsePlayers(read("players.json5"));
+  const all = Object.values(players);
+
+  it("can be drawn", () => {
+    assert.deepEqual(unreachablePlayers(players), []);
+    assertValid(players, drawLottery(players, {}, { random: seededRandom(0) }));
+  });
+
+  it("renders the templates for every player", () => {
+    const lottery = drawLottery(players, {}, { random: seededRandom(0) });
+    const email = compileMailTemplate(read("email.md"));
+    const sms = compileTextTemplate(read("sms.txt"));
+    for (const player of all) {
+      const context = {
+        player,
+        players: all,
+        target: players[lottery[player.id]],
+      };
+      const name = context.target.displayName;
+      assert(email(context).text.includes(name), name);
+      assert(sms(context).includes(name), name);
+    }
+  });
+
+  it("announces the game before the draw", () => {
+    const announce = compileMailTemplate(read("announce.md"));
+    const { text } = announce({
+      player: all[0],
+      players: all,
+      target: undefined,
+    });
+    assert.match(text, /- Grace\n/);
   });
 });
