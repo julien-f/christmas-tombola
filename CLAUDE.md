@@ -4,7 +4,7 @@ Usage: [README](README.md).
 
 ## Development
 
-- `npm run check` (format, lint, tests) passes before committing; `npm run format` fixes formatting.
+- `npm run check` (format, lint, tests) passes before committing, and the pre-push hook enforces it; `npm run format` fixes formatting.
 - Single test: `npm test -- --test-name-pattern='<name>'`.
 - `_sendSms.test.mjs` needs `openssl` on the PATH.
 - ESLint and Prettier ignores come from `.gitignore` only.
