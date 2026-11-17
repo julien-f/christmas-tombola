@@ -36,6 +36,7 @@
     "test": "node --test *.test.mjs"
   },
   "lint-staged": {
+    "!(*.js|*.cjs|*.mjs)": "prettier --write --ignore-unknown",
     "*.{,c,m}js": [
       "prettier --write",
       "eslint --no-warn-ignored"
