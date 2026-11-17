@@ -213,7 +213,10 @@ const COMMANDS = Object.freeze({
       createSender: async () => {
         const sendMail = await createMailer(
           requireConfig(this.config, "email"),
-        );
+        ).catch((error) => {
+          // eslint-disable-next-line no-throw-literal
+          throw `SMTP server (\`email.transport\` in the configuration): ${error.message}`;
+        });
         // Not from the template: a comma in a name would split it.
         return (player, message) =>
           sendMail(
