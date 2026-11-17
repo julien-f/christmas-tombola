@@ -12,7 +12,6 @@ import {
   createGlobMatcher,
   createMailer,
   draw,
-  noop,
   parsePlayers,
 } from "./utils.mjs";
 import { sendSms } from "./_sendSms.mjs";
@@ -116,125 +115,112 @@ const COMMANDS = Object.freeze({
   },
 
   async email(args) {
-    const {
-      values: { force: forceFlag },
-      positionals: [
-        gameDir = requireArg("<game directory>"),
-        mailTemplateFile = requireArg("<mail template>"),
-        ...patterns
-      ],
-    } = parseCommandArgs(args);
-
-    const [players, mailTemplate, lottery] = await Promise.all([
-      readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
-      readFile(mailTemplateFile, "utf8").then(compileMailTemplate),
-      readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop),
-    ]);
-
-    const sendMail = await createMailer(this.config.email);
-    const isPlayerEnabled = createGlobMatcher(patterns);
-
-    const sortedPlayers = sortByDisplayName(players);
-
-    await Promise.all(
-      sortedPlayers.map(async (player) => {
-        if (!isPlayerEnabled(player.displayName.toLowerCase())) {
-          return;
-        }
-
-        if (player.email === undefined) {
-          console.warn("email: player %s has no address", player.displayName);
-          return;
-        }
-
-        try {
-          await sendMail(
-            {
-              ...mailTemplate({
-                player,
-                players: sortedPlayers,
-                target: lottery && players[lottery[player.id]],
-              }),
-              // Not from the template: a comma in a name would split it.
-              to: { name: player.displayName, address: player.email },
-            },
-            forceFlag,
+    await sendToPlayers(args, {
+      contact: "email",
+      compile: compileMailTemplate,
+      format: ({ subject, text }) => `Subject: ${subject}\n\n${text}`,
+      createSender: async () => {
+        const sendMail = await createMailer(this.config.email);
+        // Not from the template: a comma in a name would split it.
+        return (player, message) =>
+          sendMail(
+            { name: player.displayName, address: player.email },
+            message,
           );
-          console.log(
-            "email sent to %s (%s)",
-            player.displayName,
-            player.email,
-          );
-        } catch (error) {
-          console.log(
-            "failed sending email to %s (%s)",
-            player.displayName,
-            player.email,
-            error,
-          );
-        }
-      }),
-    );
+      },
+    });
   },
 
   async sms(args) {
-    const {
-      values: { force },
-      positionals: [
-        gameDir = requireArg("<game directory>"),
-        templateFile = requireArg("<mail template>"),
-        ...patterns
-      ],
-    } = parseCommandArgs(args);
-
-    const [players, template, lottery] = await Promise.all([
-      readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
-      readFile(templateFile, "utf8").then(Handlebars.compile),
-      readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop),
-    ]);
-
-    const isPlayerEnabled = createGlobMatcher(
-      patterns.map((_) => _.toLowerCase()),
-    );
-
-    const sortedPlayers = sortByDisplayName(players);
-
-    await Promise.all(
-      sortedPlayers.map(async (player) => {
-        if (!isPlayerEnabled(player.displayName.toLowerCase())) {
-          return;
-        }
-
-        if (player.phone === undefined) {
-          console.warn("sms: player %s has no number", player.displayName);
-          return;
-        }
-
-        const message = template({
-          player,
-          players: sortedPlayers,
-          target: lottery && players[lottery[player.id]],
-        });
-
-        if (force) {
-          return sendSms(this.config.sms, player.phone, message).then(
-            console.log,
-            console.error,
-          );
-        }
-
-        console.log(
-          "would have sent the following message to %s (%s)",
-          player.displayName,
-          player.phone,
-        );
-        console.log("---");
-        console.log(message);
-        console.log("---");
-      }),
-    );
+    await sendToPlayers(args, {
+      contact: "phone",
+      compile: (source) => Handlebars.compile(source, { noEscape: true }),
+      format: (message) => message,
+      createSender: () => (player, message) =>
+        sendSms(this.config.sms, player.phone, message),
+    });
   },
 });
+
+// Renders the template for each selected player and sends it, one at a
+// time, if `--force`; otherwise prints it, with targets hidden unless
+// `--show`.
+async function sendToPlayers(args, { contact, compile, format, createSender }) {
+  const {
+    values: { force, show },
+    positionals: [
+      gameDir = requireArg("<game directory>"),
+      templateFile = requireArg("<template>"),
+      ...patterns
+    ],
+  } = parseCommandArgs(args);
+
+  const [{ players, lottery }, template] = await Promise.all([
+    readGame(gameDir),
+    readFile(templateFile, "utf8").then(compile),
+  ]);
+
+  // `send(player, message)`, created upfront to check the configuration.
+  const send = force ? await createSender() : undefined;
+  const isSelected = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
+  const sortedPlayers = sortByDisplayName(players);
+  const failures = [];
+
+  for (const player of sortedPlayers) {
+    const name = player.displayName;
+    if (!isSelected(name.toLowerCase())) {
+      continue;
+    }
+
+    if (player[contact] === undefined) {
+      console.warn("%s: no %s, skipped", name, contact);
+      continue;
+    }
+
+    // Without a lottery, templates are announcements without targets.
+    let target;
+    if (lottery !== undefined) {
+      target = players[lottery[player.id]];
+      if (target === undefined) {
+        console.error("%s: no target, run draw first", name);
+        failures.push(name);
+        continue;
+      }
+      if (!force && !show) {
+        target = Object.fromEntries(
+          Object.keys(target).map((key) => [key, "[target]"]),
+        );
+      }
+    }
+
+    const message = template({ player, players: sortedPlayers, target });
+
+    if (!force) {
+      console.log(
+        "--- to %s (%s)\n%s\n",
+        name,
+        player[contact],
+        format(message),
+      );
+      continue;
+    }
+
+    try {
+      await send(player, message);
+      console.log("%s: sent to %s", name, player[contact]);
+    } catch (error) {
+      console.error("%s: failed: %s", name, error.message);
+      failures.push(name);
+    }
+  }
+
+  if (failures.length !== 0) {
+    console.error("not sent to: %s", failures.join(", "));
+    process.exitCode = 1;
+  } else if (!force) {
+    console.log("dry run: nothing sent, use --force to send");
+  }
+}
 
 // -------------------------------------------------------------------
 

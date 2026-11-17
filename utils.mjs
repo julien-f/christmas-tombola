@@ -95,8 +95,8 @@ export async function createMailer({ transport: transportConfig, ...config }) {
 
   await transport.verify();
 
-  return async function sendMail(data, noTest = false) {
-    return noTest && transport.sendMail({ ...config, ...data });
+  return async function sendMail(to, data) {
+    return transport.sendMail({ ...config, ...data, to });
   };
 }
 
@@ -254,10 +254,6 @@ function hasMatching(sources, targets, canDraw) {
   };
   return sources.every((source) => augment(source, new Set()));
 }
-
-// -------------------------------------------------------------------
-
-export const noop = Function.prototype;
 
 // -------------------------------------------------------------------
 
