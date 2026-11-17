@@ -36,7 +36,7 @@ check() {
   fi
 }
 
-check format prettier --check . --cache &
+check format prettier --check . --cache --cache-strategy content &
 format=$!
 check lint node --run lint &
 lint=$!
