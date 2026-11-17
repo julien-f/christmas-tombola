@@ -2,13 +2,10 @@
 
 import { dirname, join } from "node:path";
 import { load as loadConfig } from "app-conf";
-import { readFile, writeFile } from "fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import execPromise from "exec-promise";
-import forEach from "lodash/forEach.js";
-import getopts from "getopts";
+import { parseArgs } from "node:util";
 import Handlebars from "handlebars";
-import orderBy from "lodash/orderBy.js";
 
 import {
   compileMailTemplate,
@@ -27,6 +24,18 @@ function requireArg(name) {
 
   throw message;
 }
+
+const parseCommandArgs = (args) =>
+  parseArgs({
+    args,
+    allowPositionals: true,
+    options: { force: { type: "boolean", short: "f", default: false } },
+  });
+
+const sortByDisplayName = (players) =>
+  Object.values(players).sort((a, b) =>
+    a.displayName.localeCompare(b.displayName),
+  );
 
 // -------------------------------------------------------------------
 
@@ -47,13 +56,13 @@ const COMMANDS = Object.freeze({
     const players = parsePlayers(await readFile(playersFile));
     lottery = draw(players, lottery);
 
-    forEach(lottery, (targetId, sourceId) => {
+    for (const [sourceId, targetId] of Object.entries(lottery)) {
       console.log(
         "%s → %s",
         players[sourceId].displayName,
         players[targetId].displayName,
       );
-    });
+    }
 
     await writeFile(lotteryFile, JSON.stringify(lottery, null, 2));
   },
@@ -65,9 +74,9 @@ const COMMANDS = Object.freeze({
     ]);
 
     if (lottery) {
-      forEach(lottery, (targetId, sourceId) => {
+      for (const [sourceId, targetId] of Object.entries(lottery)) {
         players[sourceId].target = players[targetId].displayName;
-      });
+      }
     }
 
     return players;
@@ -75,18 +84,13 @@ const COMMANDS = Object.freeze({
 
   async email(args) {
     const {
-      force: forceFlag = false,
-      _: [
+      values: { force: forceFlag },
+      positionals: [
         gameDir = requireArg("<game directory>"),
         mailTemplateFile = requireArg("<mail template>"),
         ...patterns
       ],
-    } = getopts(args, {
-      boolean: ["force"],
-      alias: {
-        force: ["f"],
-      },
-    });
+    } = parseCommandArgs(args);
 
     const [players, mailTemplate, lottery] = await Promise.all([
       readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
@@ -97,7 +101,7 @@ const COMMANDS = Object.freeze({
     const sendMail = await createMailer(this.config.email);
     const isPlayerEnabled = createGlobMatcher(patterns);
 
-    const sortedPlayers = orderBy(players, "displayName");
+    const sortedPlayers = sortByDisplayName(players);
 
     await Promise.all(
       sortedPlayers.map(async (player) => {
@@ -138,18 +142,13 @@ const COMMANDS = Object.freeze({
 
   async sms(args) {
     const {
-      force = false,
-      _: [
+      values: { force },
+      positionals: [
         gameDir = requireArg("<game directory>"),
         templateFile = requireArg("<mail template>"),
         ...patterns
       ],
-    } = getopts(args, {
-      boolean: ["force"],
-      alias: {
-        force: ["f"],
-      },
-    });
+    } = parseCommandArgs(args);
 
     const [players, template, lottery] = await Promise.all([
       readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
@@ -161,7 +160,7 @@ const COMMANDS = Object.freeze({
       patterns.map((_) => _.toLowerCase()),
     );
 
-    const sortedPlayers = orderBy(players, "displayName");
+    const sortedPlayers = sortByDisplayName(players);
 
     await Promise.all(
       sortedPlayers.map(async (player) => {
@@ -207,25 +206,21 @@ const { name: pkgName, version: pkgVersion } = JSON.parse(
 );
 
 const help = `
-Usage: ${pkgName} <command>
+Usage: ${pkgName} <command> [arguments]
+
+Commands:
+  draw <players file> [<lottery file>]
+  dump <game directory>
+  email [--force] <game directory> <mail template> [<pattern>...]
+  sms [--force] <game directory> <sms template> [<pattern>...]
 
 ${pkgName} v${pkgVersion}
 `;
 
-execPromise(async (args) => {
-  const { help: helpFlag, _: restArgs } = getopts(args, {
-    boolean: ["help"],
-    alias: {
-      help: ["h"],
-    },
-    stopEarly: true,
-  });
-
-  if (helpFlag) {
+async function main([commandName, ...commandArgs]) {
+  if (commandName === "-h" || commandName === "--help") {
     return help;
   }
-
-  const [commandName, ...commandArgs] = restArgs;
 
   if (!commandName) {
     // eslint-disable-next-line no-throw-literal
@@ -234,15 +229,14 @@ execPromise(async (args) => {
     )})`;
   }
 
-  const command = COMMANDS[commandName];
-  if (!command) {
+  if (!Object.hasOwn(COMMANDS, commandName)) {
     // eslint-disable-next-line no-throw-literal
     throw `invalid <command>: ${commandName} (should be one of ${Object.keys(
       COMMANDS,
     ).join(", ")})`;
   }
 
-  return command.call(
+  return COMMANDS[commandName].call(
     {
       config: await loadConfig({
         appName: "christmas-tombola",
@@ -251,4 +245,18 @@ execPromise(async (args) => {
     },
     commandArgs,
   );
-});
+}
+
+main(process.argv.slice(2)).then(
+  (result) => {
+    if (result !== undefined) {
+      console.log(
+        typeof result === "string" ? result : JSON.stringify(result, null, 2),
+      );
+    }
+  },
+  (error) => {
+    console.error(error);
+    process.exitCode = 1;
+  },
+);

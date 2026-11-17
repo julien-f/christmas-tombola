@@ -1,28 +1,23 @@
 import { marked } from "marked";
-import forEach from "lodash/forEach.js";
 import frontMatter from "front-matter";
 import handlebars from "handlebars";
 import JSON5 from "json5";
 import micromatch from "micromatch";
 import nodemailer from "nodemailer";
-import stubTrue from "lodash/stubTrue.js";
 
 // ===================================================================
 
-function compileRecursively(template) {
-  if (typeof template === "string") {
-    return handlebars.compile(template);
+// Applies `fn` to every leaf of a JSON-like value.
+function mapLeaves(value, fn) {
+  if (Array.isArray(value)) {
+    return value.map((item) => mapLeaves(item, fn));
   }
-
-  return mapInPlace(template, compileRecursively);
-}
-
-function evaluateRecursively(value) {
-  if (typeof value === "function") {
-    return value(this);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, mapLeaves(item, fn)]),
+    );
   }
-
-  return map(value, evaluateRecursively, this);
+  return fn(value);
 }
 
 // Compiles a Handlebars email template with a front matter.
@@ -34,16 +29,21 @@ export function compileMailTemplate(source) {
 
   mailTemplate.markdown = body;
 
-  compileRecursively(mailTemplate);
+  const compiled = mapLeaves(mailTemplate, (value) =>
+    typeof value === "string" ? handlebars.compile(value) : value,
+  );
 
-  return (context) => evaluateRecursively.call(context, mailTemplate);
+  return (context) =>
+    mapLeaves(compiled, (value) =>
+      typeof value === "function" ? value(context) : value,
+    );
 }
 
 // -------------------------------------------------------------------
 
 export function createGlobMatcher(patterns) {
   if (patterns.length === 0) {
-    return stubTrue;
+    return () => true;
   }
 
   const noneMustMatch = [];
@@ -156,54 +156,6 @@ export function draw(_items, lottery = { __proto__: null }) {
 
   return lottery;
 }
-
-// -------------------------------------------------------------------
-
-// Returns the value of a property and removes it from the object.
-export function extractProperty(obj, prop) {
-  const value = obj[prop];
-  delete obj[prop];
-  return value;
-}
-
-// -------------------------------------------------------------------
-
-// Special value which can be returned to stop an iteration in map().
-export const DONE = {};
-
-// Fill `target` by running each element in `collection` through
-// `iteratee`.
-//
-// If `target` is undefined, it defaults to a new array if
-// `collection` is array-like (has a `length` property), otherwise an
-// object.
-//
-// The context of `iteratee` can be specified via `thisArg`.
-//
-// Note: the Mapping can be interrupted by returning the special value
-// `DONE` provided as the fourth argument.
-//
-// Usage: collection::map(item => item + 1)
-export function map(
-  collection,
-  iteratee,
-  thisArg,
-  target = "length" in collection ? [] : {},
-) {
-  forEach(collection, (item, i) => {
-    const value = iteratee.call(thisArg, item, i, collection, DONE);
-    if (value === DONE) {
-      return false;
-    }
-
-    target[i] = value;
-  });
-
-  return target;
-}
-
-export const mapInPlace = (collection, iteratee, thisArg) =>
-  map(collection, iteratee, thisArg, collection);
 
 // -------------------------------------------------------------------
 
