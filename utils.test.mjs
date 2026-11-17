@@ -185,15 +185,71 @@ describe("draw", () => {
         }
       }
       const players = makePlayers(spec);
-      const message = JSON.stringify(spec);
-      if (bruteForceExists(players)) {
-        assertValid(players, drawLottery(players, {}, { random }));
-      } else {
+
+      // A random previous lottery, with a player X who left and pairs
+      // breaking any rule.
+      const previousIds = [...Object.keys(players), "X"];
+      const pick = () => previousIds[Math.floor(random() * previousIds.length)];
+      const previous = {};
+      for (const id of previousIds) {
+        if (random() < 0.5) {
+          previous[id] = pick();
+        }
+      }
+
+      const message = JSON.stringify({ spec, previous });
+      if (!bruteForceExists(players)) {
         assert.throws(
-          () => drawLottery(players, {}, { random }),
-          /no valid draw/,
+          () => draw(players, previous, { random }),
+          /no valid draw exists/,
           message,
         );
+        continue;
+      }
+
+      const { lottery, dropped, notify } = draw(players, previous, { random });
+      assertValid(players, lottery);
+
+      const isDropped = ([source]) => dropped.some(([s]) => s === source);
+      const kept = Object.entries(previous).filter((pair) => !isDropped(pair));
+      assert.deepEqual(
+        [...kept, ...dropped].sort(),
+        Object.entries(previous).sort(),
+        message,
+      );
+      const isValid = ([source, target]) =>
+        source in players &&
+        target in players &&
+        !players[source].excluded.has(target);
+      for (const [source, target] of kept) {
+        assert(isValid([source, target]), message);
+        assert(
+          !kept.some(([s, t]) => t === target && s !== source),
+          `duplicate target: ${message}`,
+        );
+        assert(
+          !kept.some(([s, t]) => s === target && t === source),
+          `reciprocal: ${message}`,
+        );
+      }
+      for (const [source, target] of dropped) {
+        assert(
+          !isValid([source, target]) ||
+            kept.some(
+              ([s, t]) => t === target || (s === target && t === source),
+            ),
+          `wrongly dropped ${source} → ${target}: ${message}`,
+        );
+      }
+
+      assert.deepEqual(
+        notify,
+        Object.keys(players).filter((id) => lottery[id] !== previous[id]),
+      );
+      for (const id in players) {
+        if (!(id in previous)) {
+          assert(notify.includes(id), message);
+        }
       }
     }
   });
