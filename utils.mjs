@@ -212,7 +212,9 @@ export function draw(players, previous = {}, { random = Math.random } = {}) {
     do {
       const source = kept.pop();
       if (source === undefined) {
-        throw new Error("no valid draw exists");
+        throw new Error(
+          "no valid draw exists: too few players (nobody draws themselves, their groups or their giver)",
+        );
       }
       release(source);
     } while (!fill());
@@ -265,7 +267,9 @@ function searchAssignment(sources, targets, result, canDraw, random) {
     shuffleArray(candidates, random);
     for (const target of candidates) {
       if (++steps > MAX_SEARCH_STEPS) {
-        throw new Error("no valid draw found (search limit reached)");
+        throw new Error(
+          "no valid draw found: too constrained, retry or loosen the groups",
+        );
       }
       result[source] = target;
       free.delete(target);

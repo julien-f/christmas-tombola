@@ -131,7 +131,14 @@ const COMMANDS = Object.freeze({
         .join(", ")} (set \`inPerson: true\` to tell them in person)`;
     }
 
-    const { lottery, dropped, notify } = draw(players, previous);
+    let result;
+    try {
+      result = draw(players, previous);
+    } catch (error) {
+      // The players' to fix, not a bug: no stack trace.
+      throw error.message.startsWith("no valid draw") ? error.message : error;
+    }
+    const { lottery, dropped, notify } = result;
 
     if (dropped.length !== 0) {
       console.warn(
