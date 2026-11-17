@@ -20,23 +20,30 @@ function mapLeaves(value, fn) {
   return fn(value);
 }
 
-// Compiles a Handlebars email template with a front matter.
+// Compiles a mail template: a Markdown body and a front matter of
+// Nodemailer fields (subject, etc.), all Handlebars templates.
 //
-// Returns a function which when executed returns an object which can
-// be used directly with Nodemailer.
+// Returns a function which, given a context, returns Nodemailer data
+// with `text` and `html` parts.
 export function compileMailTemplate(source) {
-  const { attributes: mailTemplate = {}, body } = frontMatter(source);
+  const { attributes, body } = frontMatter(source);
 
-  mailTemplate.markdown = body;
-
-  const compiled = mapLeaves(mailTemplate, (value) =>
-    typeof value === "string" ? handlebars.compile(value) : value,
+  const fields = mapLeaves(attributes, (value) =>
+    typeof value === "string"
+      ? handlebars.compile(value, { noEscape: true })
+      : value,
   );
+  const text = handlebars.compile(body, { noEscape: true });
+  // Escaped values so that names cannot inject HTML.
+  const html = handlebars.compile(body);
 
-  return (context) =>
-    mapLeaves(compiled, (value) =>
+  return (context) => ({
+    ...mapLeaves(fields, (value) =>
       typeof value === "function" ? value(context) : value,
-    );
+    ),
+    text: text(context),
+    html: marked.parse(html(context)),
+  });
 }
 
 // -------------------------------------------------------------------
@@ -89,16 +96,7 @@ export async function createMailer({ transport: transportConfig, ...config }) {
   await transport.verify();
 
   return async function sendMail(data, noTest = false) {
-    data = { ...config, ...data };
-
-    const { markdown } = data;
-    if (markdown !== undefined) {
-      delete data.markdown;
-      data.text = markdown;
-      data.html = marked.parse(markdown);
-    }
-
-    return noTest && transport.sendMail(data);
+    return noTest && transport.sendMail({ ...config, ...data });
   };
 }
 

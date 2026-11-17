@@ -149,11 +149,15 @@ const COMMANDS = Object.freeze({
 
         try {
           await sendMail(
-            mailTemplate({
-              player,
-              players: sortedPlayers,
-              target: lottery && players[lottery[player.id]],
-            }),
+            {
+              ...mailTemplate({
+                player,
+                players: sortedPlayers,
+                target: lottery && players[lottery[player.id]],
+              }),
+              // Not from the template: a comma in a name would split it.
+              to: { name: player.displayName, address: player.email },
+            },
             forceFlag,
           );
           console.log(

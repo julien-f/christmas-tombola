@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { draw, parsePlayers } from "./utils.mjs";
+import { compileMailTemplate, draw, parsePlayers } from "./utils.mjs";
 
 // Deterministic PRNG (mulberry32) so that failures are reproducible.
 function seededRandom(seed) {
@@ -268,5 +268,28 @@ describe("draw with an existing lottery", () => {
     assert.throws(() => draw(players, { A: "A" }), /existing pairs/);
     assert.throws(() => draw(players, { C: "D", D: "C" }), /existing pairs/);
     assert.throws(() => draw(players, { A: "C", B: "C" }), /existing pairs/);
+  });
+});
+
+describe("compileMailTemplate", () => {
+  it("renders fields, text and HTML", () => {
+    const render = compileMailTemplate(
+      [
+        "---",
+        "subject: Gift for {{player.name}}",
+        "bcc: { name: Me, address: me@example.com }",
+        "---",
+        "Hi {{player.name}}, you give to **{{target.name}}**.",
+      ].join("\n"),
+    );
+    assert.deepEqual(
+      render({ player: { name: "Tom & Jerry" }, target: { name: "<b>A</b>" } }),
+      {
+        subject: "Gift for Tom & Jerry",
+        bcc: { name: "Me", address: "me@example.com" },
+        text: "Hi Tom & Jerry, you give to **<b>A</b>**.",
+        html: "<p>Hi Tom &amp; Jerry, you give to <strong>&lt;b&gt;A&lt;/b&gt;</strong>.</p>\n",
+      },
+    );
   });
 });
