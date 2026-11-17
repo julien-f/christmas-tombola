@@ -78,7 +78,8 @@ export async function createMailer({ transport: transportConfig, ...config }) {
 // -------------------------------------------------------------------
 
 // Uniform sampling is tried first so that every valid draw is equally
-// likely; the bounded search handles heavily constrained games.
+// likely; the bounded search, not uniform, handles heavily constrained
+// games (e.g. a group of a third of the players).
 const MAX_SAMPLING_TRIES = 1e4;
 const MAX_SEARCH_STEPS = 1e6;
 
@@ -160,7 +161,7 @@ function sampleAssignment(sources, targets, result, canDraw, random) {
 }
 
 // Depth-first search, assigning first the source with the fewest
-// candidates.
+// candidates and pruning branches without a matching.
 function searchAssignment(sources, targets, result, canDraw, random) {
   if (!hasMatching(sources, targets, canDraw)) {
     return false;
@@ -192,7 +193,8 @@ function searchAssignment(sources, targets, result, canDraw, random) {
       }
       result[source] = target;
       free.delete(target);
-      if (search()) {
+      // Checked after the assignment so that its reciprocity counts.
+      if (hasMatching([...remaining], [...free], canDraw) && search()) {
         return true;
       }
       free.add(target);

@@ -132,6 +132,18 @@ describe("draw", () => {
     });
   }
 
+  it("gives a valid draw for large groups", () => {
+    // Sampling almost never succeeds here, so the search does the work.
+    const group = (name) => Array.from({ length: 10 }, (_, i) => name + i);
+    const players = makePlayers([group("A"), group("B"), group("C")]);
+    for (let seed = 0; seed < 10; ++seed) {
+      assertValid(
+        players,
+        drawLottery(players, {}, { random: seededRandom(seed) }),
+      );
+    }
+  });
+
   it("draws uniformly among valid draws", () => {
     // 4 players: the 6 cycles of length 4 are the only valid draws.
     const players = makePlayers(["A", "B", "C", "D"]);
