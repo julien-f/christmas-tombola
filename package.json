@@ -3,19 +3,11 @@
   "name": "christmas-tombola",
   "version": "0.0.0",
   "license": "ISC",
-  "description": "",
-  "keywords": [],
-  "homepage": "",
-  "bugs": "",
-  "repository": {
-    "type": "git",
-    "url": ""
-  },
+  "repository": "github:julien-f/christmas-tombola",
   "author": {
     "name": "Julien Fontanet",
     "email": "julien.fontanet@isonoe.net"
   },
-  "preferGlobal": false,
   "bin": {
     "christmas-tombola": "cli.mjs"
   },
