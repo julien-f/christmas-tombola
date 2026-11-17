@@ -1,0 +1,28 @@
+// Copy to ~/.config/christmas-tombola/config.json5 (or config.json5 next to cli.mjs).
+{
+  email: {
+    // Any other Nodemailer message field (bcc, replyTo…) applies to every mail.
+    from: { name: "Santa", address: "santa@example.com" },
+
+    // Nodemailer transport: https://nodemailer.com/smtp/
+    transport: {
+      host: "smtp.example.com",
+      port: 465,
+      secure: true,
+      auth: { user: "santa@example.com", pass: "secret" },
+    },
+  },
+
+  sms: {
+    hostname: "sms-gateway.example.com",
+    port: 8443,
+    password: "secret",
+
+    // Optional: SHA-256 fingerprint of a self-signed certificate, from
+    // `openssl s_client -connect host:port </dev/null | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2`
+    // fingerprint: "AB:CD:…",
+
+    // Optional: ms without answer before failing (default: 30000).
+    // timeout: 30000,
+  },
+}

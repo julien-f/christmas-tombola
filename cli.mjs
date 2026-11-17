@@ -1,21 +1,17 @@
 #!/usr/bin/env node
 
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { load as loadConfig } from "app-conf";
-import { readFile, writeFile } from "fs/promises";
-import { readFileSync } from "node:fs";
-import execPromise from "exec-promise";
-import forEach from "lodash/forEach.js";
-import getopts from "getopts";
+import { readFile, writeFile } from "node:fs/promises";
+import pkg from "./package.json" with { type: "json" };
+import { parseArgs } from "node:util";
 import Handlebars from "handlebars";
-import orderBy from "lodash/orderBy.js";
 
 import {
   compileMailTemplate,
   createGlobMatcher,
   createMailer,
   draw,
-  noop,
   parsePlayers,
 } from "./utils.mjs";
 import { sendSms } from "./_sendSms.mjs";
@@ -28,226 +24,305 @@ function requireArg(name) {
   throw message;
 }
 
+function requireConfig(config, key) {
+  if (config[key] === undefined) {
+    // eslint-disable-next-line no-throw-literal
+    throw `missing \`${key}\` section in the configuration`;
+  }
+  return config[key];
+}
+
+function parseCommandArgs(args) {
+  try {
+    return parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        force: { type: "boolean", short: "f", default: false },
+        show: { type: "boolean", default: false },
+      },
+    });
+  } catch (error) {
+    // A usage error, not a bug: no stack trace.
+    throw error.message;
+  }
+}
+
+const sortByDisplayName = (players) =>
+  Object.values(players).sort((a, b) =>
+    a.displayName.localeCompare(b.displayName),
+  );
+
+const lotteryPath = (gameDir) => join(gameDir, "lottery.json");
+
+// Returns the players and the lottery (undefined if not drawn yet).
+const readGame = async (gameDir) => ({
+  players: parsePlayers(await readFile(join(gameDir, "players.json5"))),
+  lottery: await readFile(lotteryPath(gameDir)).then(JSON.parse, (error) => {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }),
+});
+
 // -------------------------------------------------------------------
 
 const COMMANDS = Object.freeze({
-  async draw([playersFile = requireArg("<game directory>"), lotteryFile]) {
-    if (lotteryFile === undefined) {
-      lotteryFile = join(dirname(playersFile), "lottery.json");
+  async draw(args) {
+    const {
+      values: { show },
+      positionals: [gameDir = requireArg("<game directory>")],
+    } = parseCommandArgs(args);
+
+    const { players, lottery: previous } = await readGame(gameDir);
+    const { lottery, dropped, notify } = draw(players, previous);
+
+    if (dropped.length !== 0) {
+      console.warn(
+        "dropped %d pair(s): player left or rules changed%s",
+        dropped.length,
+        show ? ": " + dropped.map((pair) => pair.join(" → ")).join(", ") : "",
+      );
+    }
+    if (previous !== undefined) {
+      console.log(
+        "new or changed targets for: %s",
+        notify.map((id) => players[id].displayName).join(", ") || "nobody",
+      );
     }
 
-    let lottery = await readFile(lotteryFile)
-      .then(JSON.parse)
-      .catch((error) => {
-        if (error.code !== "ENOENT") {
-          console.warn("error reading lottery", error);
-        }
-      });
+    if (show) {
+      for (const [sourceId, targetId] of Object.entries(lottery)) {
+        console.log(
+          "%s → %s",
+          players[sourceId].displayName,
+          players[targetId].displayName,
+        );
+      }
+    }
 
-    const players = parsePlayers(await readFile(playersFile));
-    lottery = draw(players, lottery);
-
-    forEach(lottery, (targetId, sourceId) => {
-      console.log(
-        "%s → %s",
-        players[sourceId].displayName,
-        players[targetId].displayName
-      );
-    });
-
-    await writeFile(lotteryFile, JSON.stringify(lottery, null, 2));
+    await writeFile(lotteryPath(gameDir), JSON.stringify(lottery, null, 2));
+    console.log(
+      "%d players drawn, saved to %s",
+      Object.keys(lottery).length,
+      lotteryPath(gameDir),
+    );
   },
 
-  async dump([gameDir = requireArg("<game directory>")]) {
-    const [players, lottery] = await Promise.all([
-      readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
-      readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop),
-    ]);
+  async dump(args) {
+    const {
+      values: { show },
+      positionals: [gameDir = requireArg("<game directory>")],
+    } = parseCommandArgs(args);
 
-    if (lottery) {
-      forEach(lottery, (targetId, sourceId) => {
-        players[sourceId].target = players[targetId].displayName;
-      });
+    const { players, lottery = {} } = await readGame(gameDir);
+
+    if (show) {
+      for (const [sourceId, targetId] of Object.entries(lottery)) {
+        if (sourceId in players && targetId in players) {
+          players[sourceId].target = players[targetId].displayName;
+        }
+      }
     }
 
     return players;
   },
 
   async email(args) {
-    const {
-      force: forceFlag = false,
-      _: [
-        gameDir = requireArg("<game directory>"),
-        mailTemplateFile = requireArg("<mail template>"),
-        ...patterns
-      ],
-    } = getopts(args, {
-      boolean: ["force"],
-      alias: {
-        force: ["f"],
+    await sendToPlayers(args, {
+      contact: "email",
+      compile: compileMailTemplate,
+      format: ({ subject, text }) => `Subject: ${subject}\n\n${text}`,
+      createSender: async () => {
+        const sendMail = await createMailer(
+          requireConfig(this.config, "email"),
+        );
+        // Not from the template: a comma in a name would split it.
+        return (player, message) =>
+          sendMail(
+            { name: player.displayName, address: player.email },
+            message,
+          );
       },
     });
-
-    const [players, mailTemplate, lottery] = await Promise.all([
-      readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
-      readFile(mailTemplateFile, "utf8").then(compileMailTemplate),
-      readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop),
-    ]);
-
-    const sendMail = await createMailer(this.config.email);
-    const isPlayerEnabled = createGlobMatcher(patterns);
-
-    const sortedPlayers = orderBy(players, "displayName");
-
-    await Promise.all(
-      sortedPlayers.map(async (player) => {
-        if (!isPlayerEnabled(player.displayName.toLowerCase())) {
-          return;
-        }
-
-        if (player.email === undefined) {
-          console.warn("email: player %s has no address", player.displayName);
-          return;
-        }
-
-        try {
-          await sendMail(
-            mailTemplate({
-              player,
-              players: sortedPlayers,
-              target: lottery && players[lottery[player.id]],
-            }),
-            forceFlag
-          );
-          console.log(
-            "email sent to %s (%s)",
-            player.displayName,
-            player.email
-          );
-        } catch (error) {
-          console.log(
-            "failed sending email to %s (%s)",
-            player.displayName,
-            player.email,
-            error
-          );
-        }
-      })
-    );
   },
 
   async sms(args) {
-    const {
-      force = false,
-      _: [
-        gameDir = requireArg("<game directory>"),
-        templateFile = requireArg("<mail template>"),
-        ...patterns
-      ],
-    } = getopts(args, {
-      boolean: ["force"],
-      alias: {
-        force: ["f"],
+    await sendToPlayers(args, {
+      contact: "phone",
+      compile: (source) => Handlebars.compile(source, { noEscape: true }),
+      format: (message) => message,
+      createSender: () => {
+        const config = requireConfig(this.config, "sms");
+        return (player, message) => sendSms(config, player.phone, message);
       },
     });
-
-    const [players, template, lottery] = await Promise.all([
-      readFile(`${gameDir}/players.json5`, "utf8").then(parsePlayers),
-      readFile(templateFile, "utf8").then(Handlebars.compile),
-      readFile(`${gameDir}/lottery.json`).then(JSON.parse, noop),
-    ]);
-
-    const isPlayerEnabled = createGlobMatcher(
-      patterns.map((_) => _.toLowerCase())
-    );
-
-    const sortedPlayers = orderBy(players, "displayName");
-
-    await Promise.all(
-      sortedPlayers.map(async (player) => {
-        if (!isPlayerEnabled(player.displayName.toLowerCase())) {
-          return;
-        }
-
-        if (player.phone === undefined) {
-          console.warn("sms: player %s has no number", player.displayName);
-          return;
-        }
-
-        const message = template({
-          player,
-          players: sortedPlayers,
-          target: lottery && players[lottery[player.id]],
-        });
-
-        if (force) {
-          return sendSms(this.config.sms, player.phone, message).then(
-            console.log,
-            console.error
-          );
-        }
-
-        console.log(
-          "would have sent the following message to %s (%s)",
-          player.displayName,
-          player.phone
-        );
-        console.log("---");
-        console.log(message);
-        console.log("---");
-      })
-    );
   },
 });
 
-// -------------------------------------------------------------------
-
-const { name: pkgName, version: pkgVersion } = JSON.parse(
-  readFileSync(new URL("package.json", import.meta.url))
+// Every field is "[target]", even those the real target lacks, so that
+// dry runs reveal nothing about it.
+const HIDDEN_TARGET = new Proxy(
+  {},
+  {
+    get: (_, key) =>
+      key === Symbol.toPrimitive
+        ? () => "[target]"
+        : typeof key === "string" && key !== "toHTML"
+          ? "[target]"
+          : undefined,
+    // Handlebars only reads own properties.
+    getOwnPropertyDescriptor: () => ({
+      value: "[target]",
+      configurable: true,
+      enumerable: true,
+    }),
+  },
 );
 
-const help = `
-Usage: ${pkgName} <command>
+// Renders the template for each selected player and sends it, one at a
+// time, if `--force`; otherwise prints it, with targets hidden unless
+// `--show`.
+async function sendToPlayers(args, { contact, compile, format, createSender }) {
+  const {
+    values: { force, show },
+    positionals: [
+      gameDir = requireArg("<game directory>"),
+      templateFile = requireArg("<template>"),
+      ...patterns
+    ],
+  } = parseCommandArgs(args);
 
-${pkgName} v${pkgVersion}
-`;
+  const [{ players, lottery }, template] = await Promise.all([
+    readGame(gameDir),
+    readFile(templateFile, "utf8").then(compile),
+  ]);
 
-execPromise(async (args) => {
-  const { help: helpFlag, _: restArgs } = getopts(args, {
-    boolean: ["help"],
-    alias: {
-      help: ["h"],
-    },
-    stopEarly: true,
-  });
+  // `send(player, message)`, created upfront to check the configuration.
+  const send = force ? await createSender() : undefined;
+  const isSelected = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
+  const sortedPlayers = sortByDisplayName(players);
+  const failures = [];
+  let selected = 0;
 
-  if (helpFlag) {
-    return help;
+  for (const player of sortedPlayers) {
+    const name = player.displayName;
+    if (!isSelected(name.toLowerCase())) {
+      continue;
+    }
+    ++selected;
+
+    if (player[contact] === undefined) {
+      console.warn("%s: no %s, skipped", name, contact);
+      continue;
+    }
+
+    // Without a lottery, templates are announcements without targets.
+    let target;
+    if (lottery !== undefined) {
+      target = players[lottery[player.id]];
+      if (target === undefined) {
+        console.error("%s: no valid target in lottery.json, run draw", name);
+        failures.push(name);
+        continue;
+      }
+      if (!force && !show) {
+        target = HIDDEN_TARGET;
+      }
+    }
+
+    const message = template({ player, players: sortedPlayers, target });
+
+    if (!force) {
+      console.log(
+        "--- to %s (%s)\n%s\n",
+        name,
+        player[contact],
+        format(message),
+      );
+      continue;
+    }
+
+    try {
+      await send(player, message);
+      console.log("%s: sent to %s", name, player[contact]);
+    } catch (error) {
+      console.error("%s: failed: %s", name, error.message);
+      failures.push(name);
+    }
   }
 
-  const [commandName, ...commandArgs] = restArgs;
+  if (selected === 0) {
+    // eslint-disable-next-line no-throw-literal
+    throw "no player selected";
+  }
+  if (failures.length !== 0) {
+    console.error("not sent to: %s", failures.join(", "));
+    process.exitCode = 1;
+  } else if (!force) {
+    console.log("dry run: nothing sent, use --force to send");
+  }
+}
+
+// -------------------------------------------------------------------
+
+const help = `
+Usage: ${pkg.name} <command> [options] <arguments>
+
+Commands:
+  draw <game directory>
+  dump <game directory>
+  email <game directory> <mail template> [<pattern>...]
+  sms <game directory> <sms template> [<pattern>...]
+
+Options:
+  --show       show targets (hidden by default)
+  -f, --force  email, sms: really send (only printed by default)
+  -h, --help   show this help (as <command>)
+
+${pkg.name} v${pkg.version}
+`;
+
+async function main([commandName, ...commandArgs]) {
+  if (commandName === "-h" || commandName === "--help") {
+    return help;
+  }
 
   if (!commandName) {
     // eslint-disable-next-line no-throw-literal
     throw `missing <command> (should be one of ${Object.keys(COMMANDS).join(
-      ", "
+      ", ",
     )})`;
   }
 
-  const command = COMMANDS[commandName];
-  if (!command) {
+  if (!Object.hasOwn(COMMANDS, commandName)) {
     // eslint-disable-next-line no-throw-literal
     throw `invalid <command>: ${commandName} (should be one of ${Object.keys(
-      COMMANDS
+      COMMANDS,
     ).join(", ")})`;
   }
 
-  return command.call(
+  return COMMANDS[commandName].call(
     {
-      config: await loadConfig("christmas-tombola", {
+      config: await loadConfig({
+        appName: "christmas-tombola",
         appDir: new URL(".", import.meta.url).pathname,
       }),
     },
-    commandArgs
+    commandArgs,
   );
-});
+}
+
+main(process.argv.slice(2)).then(
+  (result) => {
+    if (result !== undefined) {
+      console.log(
+        typeof result === "string" ? result : JSON.stringify(result, null, 2),
+      );
+    }
+  },
+  (error) => {
+    console.error(error);
+    process.exitCode = 1;
+  },
+);

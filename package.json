@@ -1,6 +1,6 @@
 {
   "private": true,
-  "name": "",
+  "name": "christmas-tombola",
   "version": "0.0.0",
   "license": "ISC",
   "description": "",
@@ -20,40 +20,32 @@
     "christmas-tombola": "cli.mjs"
   },
   "engines": {
-    "node": ">=14.17"
+    "node": ">=24"
   },
   "dependencies": {
-    "@iarna/toml": "^2.2.5",
-    "app-conf": "^2.3.0",
-    "exec-promise": "^0.6.1",
-    "front-matter": "^2.1.1",
-    "getopts": "^2.3.0",
-    "handlebars": "^4.0.6",
-    "http-request-plus": "^0.14.0",
-    "json5": "^2.2.1",
-    "lodash": "^4.17.4",
-    "marked": "^4.2.2",
-    "micromatch": "^4.0.5",
-    "nodemailer": "^6.8.0"
+    "app-conf": "^6.0.0",
+    "front-matter": "^4.0.2",
+    "handlebars": "^4.7.10",
+    "json5": "^2.2.3",
+    "marked": "^18.2.1",
+    "nodemailer": "^10.6.0"
   },
   "scripts": {
-    "prepare": "husky install"
+    "lint": "eslint .",
+    "prepare": "husky",
+    "test": "node --test *.test.mjs"
   },
   "lint-staged": {
     "*.{,c,m}js": [
       "prettier --write",
-      "eslint --ignore-pattern '!*'"
+      "eslint --no-warn-ignored"
     ]
   },
   "devDependencies": {
-    "eslint": "^8.28.0",
-    "eslint-config-prettier": "^8.5.0",
-    "eslint-config-standard": "^17.0.0",
-    "eslint-plugin-import": "^2.26.0",
-    "eslint-plugin-n": "^15.5.1",
-    "eslint-plugin-promise": "^6.1.1",
-    "husky": "^8.0.2",
-    "lint-staged": "^13.0.3",
-    "prettier": "^2.7.1"
+    "eslint": "^10.15.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.1",
+    "neostandard": "^0.14.1",
+    "prettier": "^3.10.1"
   }
 }
