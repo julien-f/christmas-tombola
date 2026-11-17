@@ -158,6 +158,18 @@ const COMMANDS = Object.freeze({
       },
     });
   },
+
+  async "sms-test"(args) {
+    const {
+      positionals: [
+        phone = requireArg("<phone>"),
+        message = `${pkg.name} test SMS`,
+      ],
+    } = parseCommandArgs(args);
+
+    await sendSms(requireConfig(this.config, "sms"), phone, message);
+    return `sent to ${phone}`;
+  },
 });
 
 // Every field is "[target]", even those the real target lacks, so that
@@ -274,6 +286,7 @@ Commands:
   dump <game directory>
   email <game directory> <mail template> [<pattern>...]
   sms <game directory> <sms template> [<pattern>...]
+  sms-test <phone> [<message>]
 
 Options:
   --show       show targets (hidden by default)
