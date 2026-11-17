@@ -20,6 +20,8 @@ const toEntry = (spec) =>
     : { name: spec, email: "x@example.com" };
 const makePlayers = (spec) => parsePlayers(JSON.stringify(spec.map(toEntry)));
 
+const drawLottery = (...args) => draw(...args).lottery;
+
 function assertValid(players, lottery) {
   const ids = Object.keys(players);
   assert.deepEqual(Object.keys(lottery).sort(), ids.slice().sort());
@@ -100,7 +102,7 @@ describe("parsePlayers", () => {
       "__proto__",
       "constructor",
     ]);
-    assertValid(players, draw(players, {}, { random: seededRandom(0) }));
+    assertValid(players, drawLottery(players, {}, { random: seededRandom(0) }));
   });
 });
 
@@ -117,7 +119,10 @@ describe("draw", () => {
     it(`gives a valid draw for ${JSON.stringify(spec)}`, () => {
       const players = makePlayers(spec);
       for (let seed = 0; seed < 500; ++seed) {
-        assertValid(players, draw(players, {}, { random: seededRandom(seed) }));
+        assertValid(
+          players,
+          drawLottery(players, {}, { random: seededRandom(seed) }),
+        );
       }
     });
   }
@@ -128,7 +133,7 @@ describe("draw", () => {
     const counts = new Map();
     for (let seed = 0; seed < 6000; ++seed) {
       const key = JSON.stringify(
-        draw(players, {}, { random: seededRandom(seed) }),
+        drawLottery(players, {}, { random: seededRandom(seed) }),
       );
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
@@ -142,7 +147,7 @@ describe("draw", () => {
     // With random() = 0 the shuffle only rotates the targets, and every
     // rotation is invalid here, so only the search can succeed.
     const players = makePlayers([["A", "B"], "C", "D"]);
-    assertValid(players, draw(players, {}, { random: () => 0 }));
+    assertValid(players, drawLottery(players, {}, { random: () => 0 }));
   });
 
   it("agrees with brute force on small games", () => {
@@ -165,10 +170,10 @@ describe("draw", () => {
       const players = makePlayers(spec);
       const message = JSON.stringify(spec);
       if (bruteForceExists(players)) {
-        assertValid(players, draw(players, {}, { random }));
+        assertValid(players, drawLottery(players, {}, { random }));
       } else {
         assert.throws(
-          () => draw(players, {}, { random }),
+          () => drawLottery(players, {}, { random }),
           /no valid draw/,
           message,
         );
@@ -180,15 +185,88 @@ describe("draw", () => {
     const group = Array.from({ length: 21 }, (_, i) => `G${i}`);
     const others = Array.from({ length: 19 }, (_, i) => `O${i}`);
     const players = makePlayers([group, ...others]);
-    assert.throws(() => draw(players), /no valid draw exists/);
+    assert.throws(() => drawLottery(players), /no valid draw exists/);
   });
 
   it("completes an existing lottery without reciprocal pairs", () => {
     const players = makePlayers(["A", "B", "C", "D", "E", "F"]);
     for (let seed = 0; seed < 500; ++seed) {
-      const lottery = draw(players, { A: "B" }, { random: seededRandom(seed) });
+      const lottery = drawLottery(
+        players,
+        { A: "B" },
+        { random: seededRandom(seed) },
+      );
       assert.equal(lottery.A, "B");
       assertValid(players, lottery);
     }
+  });
+});
+
+describe("draw with an existing lottery", () => {
+  const six = ["A", "B", "C", "D", "E", "F"];
+
+  it("keeps it when complete", () => {
+    const players = makePlayers(six);
+    const previous = { ...drawLottery(players) };
+    const result = draw(players, previous);
+    assert.deepEqual({ ...result.lottery }, previous);
+    assert.deepEqual(result.notify, []);
+  });
+
+  it("drops pairs of players who left and redraws their sources", () => {
+    for (let seed = 0; seed < 200; ++seed) {
+      const random = seededRandom(seed);
+      const previous = {
+        ...drawLottery(makePlayers([...six, "X"]), {}, { random }),
+      };
+      const players = makePlayers(six);
+      const { lottery, dropped, notify } = draw(players, previous, { random });
+      assertValid(players, lottery);
+      assert.deepEqual(
+        dropped.sort(),
+        Object.entries(previous)
+          .filter((pair) => pair.includes("X"))
+          .sort(),
+      );
+      const giverToX = dropped.find(([, target]) => target === "X")[0];
+      assert.equal(notify[0], giverToX);
+      // Another pair is redrawn only when Y → X → Z → Y left Y ↔ Z.
+      if (previous[previous.X] === giverToX) {
+        assert(notify.length > 1);
+      } else {
+        assert.equal(notify.length, 1);
+      }
+      for (const [source, target] of Object.entries(previous)) {
+        if (source !== "X" && !notify.includes(source)) {
+          assert.equal(lottery[source], target);
+        }
+      }
+    }
+  });
+
+  it("inserts a new player into a complete lottery", () => {
+    for (let seed = 0; seed < 200; ++seed) {
+      const random = seededRandom(seed);
+      const previous = { ...drawLottery(makePlayers(six), {}, { random }) };
+      const players = makePlayers([...six, "N"]);
+      const { lottery, notify } = draw(players, previous, { random });
+      assertValid(players, lottery);
+      const giverToN = Object.keys(lottery).find((id) => lottery[id] === "N");
+      assert.deepEqual(notify.sort(), [giverToN, "N"].sort());
+      assert.equal(lottery.N, previous[giverToN]);
+      for (const [source, target] of Object.entries(previous)) {
+        if (source !== giverToN) {
+          assert.equal(lottery[source], target);
+        }
+      }
+    }
+  });
+
+  it("rejects pairs breaking the current rules", () => {
+    const players = makePlayers([["A", "B"], "C", "D"]);
+    assert.throws(() => draw(players, { A: "B" }), /existing pairs.*A → B/);
+    assert.throws(() => draw(players, { A: "A" }), /existing pairs/);
+    assert.throws(() => draw(players, { C: "D", D: "C" }), /existing pairs/);
+    assert.throws(() => draw(players, { A: "C", B: "C" }), /existing pairs/);
   });
 });

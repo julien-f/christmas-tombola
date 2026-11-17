@@ -109,37 +109,69 @@ export async function createMailer({ transport: transportConfig, ...config }) {
 const MAX_SAMPLING_TRIES = 1e4;
 const MAX_SEARCH_STEPS = 1e6;
 
-// Draws a target for every player which has none in `lottery`.
+// Completes `previous` (source id → target id) so that every player has
+// a target.
 //
 // A player never draws themselves, someone sharing a group with them,
 // or the player who draws them.
 //
-// Returns the complete lottery (`lottery` is left untouched).
-export function draw(players, lottery = {}, { random = Math.random } = {}) {
-  const result = { __proto__: null, ...lottery };
-  const targeted = new Set(Object.values(lottery));
-  const sources = [];
-  const targets = [];
-  for (const id of Object.keys(players)) {
-    if (!Object.hasOwn(lottery, id)) {
-      sources.push(id);
-    }
-    if (!targeted.has(id)) {
-      targets.push(id);
+// Pairs involving someone who no longer plays are dropped; other pairs
+// are kept unless the open slots cannot be filled without redrawing
+// some of them.
+//
+// Returns the lottery, the dropped pairs and the ids of the players
+// whose target is new.
+export function draw(players, previous = {}, { random = Math.random } = {}) {
+  const lottery = { __proto__: null };
+  const dropped = [];
+  for (const [source, target] of Object.entries(previous)) {
+    if (source in players && target in players) {
+      lottery[source] = target;
+    } else {
+      dropped.push([source, target]);
     }
   }
 
   const canDraw = (source, target) =>
-    !players[source].excluded.has(target) && result[target] !== source;
+    !players[source].excluded.has(target) && lottery[target] !== source;
 
-  if (
-    !sampleAssignment(sources, targets, result, canDraw, random) &&
-    !searchAssignment(sources, targets, result, canDraw, random)
-  ) {
-    throw new Error("no valid draw exists");
+  const targeted = new Set();
+  const invalid = [];
+  for (const [source, target] of Object.entries(lottery)) {
+    if (!canDraw(source, target) || targeted.has(target)) {
+      invalid.push(`${source} → ${target}`);
+    }
+    targeted.add(target);
+  }
+  if (invalid.length !== 0) {
+    throw new Error(`existing pairs break the rules: ${invalid.join(", ")}`);
   }
 
-  return result;
+  const ids = Object.keys(players);
+  const sources = ids.filter((id) => !(id in lottery));
+  const targets = ids.filter((id) => !targeted.has(id));
+  const notify = new Set(sources);
+
+  const fill = () =>
+    sampleAssignment(sources, targets, lottery, canDraw, random) ||
+    searchAssignment(sources, targets, lottery, canDraw, random);
+
+  // Release existing pairs one at a time until the open slots can be
+  // filled, e.g. a new player N and a released A → B give A → N → B.
+  const kept = Object.keys(lottery);
+  shuffleArray(kept, random);
+  while (!fill()) {
+    const source = kept.pop();
+    if (source === undefined) {
+      throw new Error("no valid draw exists");
+    }
+    sources.push(source);
+    targets.push(lottery[source]);
+    delete lottery[source];
+    notify.add(source);
+  }
+
+  return { lottery, dropped, notify: [...notify] };
 }
 
 function sampleAssignment(sources, targets, result, canDraw, random) {

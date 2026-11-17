@@ -45,16 +45,30 @@ const COMMANDS = Object.freeze({
       lotteryFile = join(dirname(playersFile), "lottery.json");
     }
 
-    let lottery = await readFile(lotteryFile)
+    const previous = await readFile(lotteryFile)
       .then(JSON.parse)
       .catch((error) => {
         if (error.code !== "ENOENT") {
-          console.warn("error reading lottery", error);
+          throw error;
         }
       });
 
     const players = parsePlayers(await readFile(playersFile));
-    lottery = draw(players, lottery);
+    const { lottery, dropped, notify } = draw(players, previous);
+
+    for (const [sourceId, targetId] of dropped) {
+      console.warn(
+        "dropped %s → %s: player no longer participates",
+        sourceId,
+        targetId,
+      );
+    }
+    if (previous !== undefined) {
+      console.log(
+        "new or changed targets: %s",
+        notify.map((id) => players[id].displayName).join(", ") || "none",
+      );
+    }
 
     for (const [sourceId, targetId] of Object.entries(lottery)) {
       console.log(
