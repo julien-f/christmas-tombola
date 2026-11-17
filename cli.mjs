@@ -3,7 +3,7 @@
 import { join } from "node:path";
 import { load as loadConfig } from "app-conf";
 import { readFile, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import pkg from "./package.json" with { type: "json" };
 import { parseArgs } from "node:util";
 import Handlebars from "handlebars";
 
@@ -266,12 +266,8 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
 
 // -------------------------------------------------------------------
 
-const { name: pkgName, version: pkgVersion } = JSON.parse(
-  readFileSync(new URL("package.json", import.meta.url)),
-);
-
 const help = `
-Usage: ${pkgName} <command> [options] <arguments>
+Usage: ${pkg.name} <command> [options] <arguments>
 
 Commands:
   draw <game directory>
@@ -284,7 +280,7 @@ Options:
   -f, --force  email, sms: really send (only printed by default)
   -h, --help   show this help (as <command>)
 
-${pkgName} v${pkgVersion}
+${pkg.name} v${pkg.version}
 `;
 
 async function main([commandName, ...commandArgs]) {
