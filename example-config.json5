@@ -13,14 +13,12 @@
     },
   },
 
+  // SMS Gate app (https://sms-gate.app) in Local Server mode: address and
+  // credentials shown in the app. Plain HTTP: use it on a trusted network.
   sms: {
-    hostname: "sms-gateway.example.com",
-    port: 8443,
+    url: "http://192.168.1.10:8080/message",
+    username: "sms",
     password: "secret",
-
-    // Optional: SHA-256 fingerprint of a self-signed certificate, from
-    // `openssl s_client -connect host:port </dev/null | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2`
-    // fingerprint: "AB:CD:…",
 
     // Optional: ms without answer before failing (default: 30000).
     // timeout: 30000,

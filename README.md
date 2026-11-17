@@ -13,6 +13,12 @@ npm link # optional: puts `christmas-tombola` on the PATH, otherwise use ./cli.m
 
 Configuration (SMTP, SMS gateway): copy [`example-config.json5`](example-config.json5) to `~/.config/christmas-tombola/config.json5`.
 
+SMS are sent by an Android phone running [SMS Gate](https://sms-gate.app) in Local Server mode, on the same network:
+
+- disable battery optimization for the app (Samsung: _Unrestricted_), else the server stops when the screen is off;
+- phone numbers in international format (`+33612345678`);
+- past 30 SMS in 30 minutes, Android asks on the phone to allow more.
+
 ## Game directory
 
 One directory per game, e.g. `games/2026/`:
