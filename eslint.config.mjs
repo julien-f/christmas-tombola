@@ -1,8 +1,7 @@
-import neostandard from "neostandard";
+import neostandard, { resolveIgnoresFromGitignore } from "neostandard";
 
 export default [
-  { ignores: [".claude/"] },
-  ...neostandard({ noStyle: true }),
+  ...neostandard({ noStyle: true, ignores: resolveIgnoresFromGitignore() }),
   // neostandard targets an older version, without import attributes.
   { languageOptions: { ecmaVersion: "latest" } },
 ];
