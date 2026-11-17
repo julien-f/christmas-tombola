@@ -20,21 +20,20 @@
     "christmas-tombola": "cli.mjs"
   },
   "engines": {
-    "node": ">=14.17"
+    "node": ">=22"
   },
   "dependencies": {
-    "@iarna/toml": "^2.2.5",
-    "app-conf": "^2.3.0",
+    "app-conf": "^6.0.0",
     "exec-promise": "^0.6.1",
-    "front-matter": "^2.1.1",
+    "front-matter": "^4.0.2",
     "getopts": "^2.3.0",
-    "handlebars": "^4.0.6",
+    "handlebars": "^4.7.10",
     "http-request-plus": "^0.14.0",
-    "json5": "^2.2.1",
+    "json5": "^2.2.3",
     "lodash": "^4.17.4",
-    "marked": "^4.2.2",
-    "micromatch": "^4.0.5",
-    "nodemailer": "^6.8.0"
+    "marked": "^18.2.1",
+    "micromatch": "^4.0.8",
+    "nodemailer": "^10.6.0"
   },
   "scripts": {
     "lint": "eslint .",

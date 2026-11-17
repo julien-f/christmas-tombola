@@ -244,7 +244,8 @@ execPromise(async (args) => {
 
   return command.call(
     {
-      config: await loadConfig("christmas-tombola", {
+      config: await loadConfig({
+        appName: "christmas-tombola",
         appDir: new URL(".", import.meta.url).pathname,
       }),
     },
