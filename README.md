@@ -30,6 +30,11 @@ SMS messages are sent through an Android phone running [SMS Gate](https://sms-ga
 5. Send them: the same commands with `--force`; they end with the in-person players to tell and their targets.
 6. After editing the players, `draw` again and send to the players it lists: `christmas-tombola email games/2026 games/2026/email.md 'alice' 'grace' --force`.
 
+## Next year
+
+1. A new directory with the players and templates, without `lottery.json`: `draw` would keep last year's pairs.
+2. `christmas-tombola draw games/2027 --avoid games/2026`: nobody gets last year's target. Pass `--avoid` on every `draw` of that game; in a small game, it leaves few draws (3 players: only the reverse of last year).
+
 ## Players
 
 `players.json5`, written by hand, see [`examples/players.json5`](examples/players.json5):
@@ -46,7 +51,7 @@ SMS messages are sent through an Android phone running [SMS Gate](https://sms-ga
 ## Commands
 
 ```sh
-christmas-tombola draw <game directory>
+christmas-tombola draw <game directory> [--avoid <previous game directory>...]
 christmas-tombola dump <game directory> [<pattern>...]
 christmas-tombola email <game directory> <template> [<pattern>...]
 christmas-tombola sms <game directory> <template> [<pattern>...]

@@ -12,6 +12,7 @@ import {
   createGlobMatcher,
   createMailer,
   draw,
+  excludePairs,
   hideTarget,
   namePattern,
   parsePlayers,
@@ -45,6 +46,7 @@ function parseCommandArgs(args) {
       args,
       allowPositionals: true,
       options: {
+        avoid: { type: "string", multiple: true, default: [] },
         force: { type: "boolean", short: "f", default: false },
         show: { type: "boolean", default: false },
       },
@@ -117,7 +119,7 @@ const readGame = async (gameDir) => {
 const COMMANDS = Object.freeze({
   async draw(args) {
     const {
-      values: { show },
+      values: { avoid, show },
       positionals: [gameDir = requireArg("<game directory>")],
     } = parseCommandArgs(args);
 
@@ -131,12 +133,26 @@ const COMMANDS = Object.freeze({
         .join(", ")} (set \`inPerson: true\` to tell them in person)`;
     }
 
+    for (const avoidDir of avoid) {
+      const path = lotteryPath(avoidDir);
+      const count = excludePairs(
+        players,
+        await readFile(path).then(parseFile(path, JSON.parse)),
+      );
+      console.log("avoiding %d pair(s) from %s", count, path);
+    }
+
     let result;
     try {
       result = draw(players, previous);
     } catch (error) {
+      if (!error.message.startsWith("no valid draw")) {
+        throw error;
+      }
       // The players' to fix, not a bug: no stack trace.
-      throw error.message.startsWith("no valid draw") ? error.message : error;
+      throw avoid.length === 0
+        ? error.message
+        : `${error.message}; try without --avoid`;
     }
     const { lottery, dropped, notify } = result;
 
@@ -425,13 +441,14 @@ const help = `
 Usage: ${pkg.name} <command> [options] <arguments>
 
 Commands:
-  draw <game directory>
+  draw <game directory> [--avoid <previous game directory>...]
   dump <game directory> [<pattern>...]
   email <game directory> <mail template> [<pattern>...]
   sms <game directory> <sms template> [<pattern>...]
   sms-test <phone> [<message>]
 
 Options:
+  --avoid      draw: no pair of that game (e.g. last year's)
   --show       show targets (hidden by default)
   -f, --force  email, sms: really send (only printed by default)
   -h, --help   show this help

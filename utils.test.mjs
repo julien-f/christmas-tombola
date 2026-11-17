@@ -7,6 +7,7 @@ import {
   compileTextTemplate,
   createGlobMatcher,
   draw,
+  excludePairs,
   hideTarget,
   parsePlayers,
   namePattern,
@@ -309,6 +310,21 @@ describe("draw", () => {
       );
       assert.equal(lottery.A, "B");
       assertValid(players, lottery);
+    }
+  });
+});
+
+describe("excludePairs", () => {
+  it("excludes the pairs of another lottery, skipping players gone", () => {
+    const players = makePlayers(["a", "b", "c", "d", "e"]);
+    const last = { a: "b", b: "c", c: "d", d: "e", e: "a", gone: "a" };
+    assert.equal(excludePairs(players, last), 5);
+    for (let seed = 0; seed < 20; ++seed) {
+      const lottery = drawLottery(players, {}, { random: seededRandom(seed) });
+      assertValid(players, lottery);
+      for (const [source, target] of Object.entries(last)) {
+        assert.notEqual(lottery[source], target, `${source} → ${target}`);
+      }
     }
   });
 });

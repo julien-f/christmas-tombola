@@ -350,6 +350,19 @@ export function parsePlayers(json) {
   return players;
 }
 
+// Forbids the pairs of `lottery` (e.g. last year's) between current
+// players; returns how many.
+export function excludePairs(players, lottery) {
+  let count = 0;
+  for (const [source, target] of Object.entries(lottery)) {
+    if (source in players && target in players) {
+      players[source].excluded.add(target);
+      ++count;
+    }
+  }
+  return count;
+}
+
 // Players who would never learn their target.
 export const unreachablePlayers = (players) =>
   Object.values(players).filter(
