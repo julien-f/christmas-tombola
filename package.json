@@ -27,7 +27,7 @@
     "format": "prettier --write .",
     "lint": "eslint .",
     "prepare": "husky",
-    "test": "node --test *.test.mjs"
+    "test": "node --test"
   },
   "lint-staged": {
     "!(*.js|*.cjs|*.mjs)": "prettier --write --ignore-unknown",
