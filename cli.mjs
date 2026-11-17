@@ -59,6 +59,12 @@ const sortByDisplayName = (players) =>
     a.displayName.localeCompare(b.displayName),
   );
 
+// Case-insensitive, on displayed names.
+const createPlayerMatcher = (patterns) => {
+  const matches = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
+  return (player) => matches(player.displayName.toLowerCase());
+};
+
 const lotteryPath = (gameDir) => join(gameDir, "lottery.json");
 
 // Returns `parse(content)`; its errors are the user's to fix: no stack
@@ -146,7 +152,7 @@ const COMMANDS = Object.freeze({
   async dump(args) {
     const {
       values: { show },
-      positionals: [gameDir = requireArg("<game directory>")],
+      positionals: [gameDir = requireArg("<game directory>"), ...patterns],
     } = parseCommandArgs(args);
 
     const { players, lottery = {} } = await readGame(gameDir);
@@ -159,7 +165,10 @@ const COMMANDS = Object.freeze({
       }
     }
 
-    return players;
+    const isSelected = createPlayerMatcher(patterns);
+    return Object.fromEntries(
+      Object.entries(players).filter(([, player]) => isSelected(player)),
+    );
   },
 
   async email(args) {
@@ -250,7 +259,7 @@ async function sendToPlayers(
     readFile(templateFile, "utf8").then(parseFile(templateFile, compile)),
   ]);
 
-  const isSelected = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
+  const isSelected = createPlayerMatcher(patterns);
   const sortedPlayers = sortByDisplayName(players);
   const hiddenTarget = hideTarget(players);
   const messages = [];
@@ -259,7 +268,7 @@ async function sendToPlayers(
 
   for (const player of sortedPlayers) {
     const name = player.displayName;
-    if (!isSelected(name.toLowerCase())) {
+    if (!isSelected(player)) {
       continue;
     }
     ++selected;
@@ -362,7 +371,7 @@ Usage: ${pkg.name} <command> [options] <arguments>
 
 Commands:
   draw <game directory>
-  dump <game directory>
+  dump <game directory> [<pattern>...]
   email <game directory> <mail template> [<pattern>...]
   sms <game directory> <sms template> [<pattern>...]
   sms-test <phone> [<message>]

@@ -47,7 +47,7 @@ SMS messages are sent through an Android phone running [SMS Gate](https://sms-ga
 
 ```sh
 christmas-tombola draw <game directory>
-christmas-tombola dump <game directory>
+christmas-tombola dump <game directory> [<pattern>...]
 christmas-tombola email <game directory> <template> [<pattern>...]
 christmas-tombola sms <game directory> <template> [<pattern>...]
 christmas-tombola sms-test <phone> [<message>]
@@ -57,7 +57,7 @@ christmas-tombola sms-test <phone> [<message>]
 - Patterns (case-insensitive globs on displayed names) select players, `!` excludes: `'a*' '!alice'`.
 - Targets stay hidden, so the organizer can play too; `--show` reveals them (`draw`, `dump`, dry runs).
 - Rerunning `draw` keeps existing pairs: it redraws only pairs that involve a removed player or break a new group, inserts new players, and lists the players whose target changed.
-- `dump` prints the players as read from `players.json5`, with their targets under `--show`.
+- `dump` prints the players as read from `players.json5`, with their targets under `--show`: `dump games/2026 heidi --show` shows only Heidi's.
 - `email` and `sms`:
   - without `--force` (`-f`), do a _dry run_: print the messages, send nothing;
   - skip players without `email` (resp. `phone`), with a warning;
