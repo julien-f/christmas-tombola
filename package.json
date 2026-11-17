@@ -31,6 +31,8 @@
     "nodemailer": "^10.6.0"
   },
   "scripts": {
+    "check": "prettier --check . && npm run lint && npm test",
+    "format": "prettier --write .",
     "lint": "eslint .",
     "prepare": "husky",
     "test": "node --test *.test.mjs"
