@@ -160,6 +160,26 @@ const COMMANDS = Object.freeze({
   },
 });
 
+// Every field is "[target]", even those the real target lacks, so that
+// dry runs reveal nothing about it.
+const HIDDEN_TARGET = new Proxy(
+  {},
+  {
+    get: (_, key) =>
+      key === Symbol.toPrimitive
+        ? () => "[target]"
+        : typeof key === "string" && key !== "toHTML"
+          ? "[target]"
+          : undefined,
+    // Handlebars only reads own properties.
+    getOwnPropertyDescriptor: () => ({
+      value: "[target]",
+      configurable: true,
+      enumerable: true,
+    }),
+  },
+);
+
 // Renders the template for each selected player and sends it, one at a
 // time, if `--force`; otherwise prints it, with targets hidden unless
 // `--show`.
@@ -207,9 +227,7 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
         continue;
       }
       if (!force && !show) {
-        target = Object.fromEntries(
-          Object.keys(target).map((key) => [key, "[target]"]),
-        );
+        target = HIDDEN_TARGET;
       }
     }
 
