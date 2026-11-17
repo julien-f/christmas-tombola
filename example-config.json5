@@ -18,8 +18,11 @@
     port: 8443,
     password: "secret",
 
-    // Optional: SHA-256 fingerprint of a self-signed certificate, e.g.
-    // `openssl s_client -connect host:port </dev/null | openssl x509 -noout -fingerprint -sha256`
-    fingerprint: "AB:CD:…",
+    // Optional: SHA-256 fingerprint of a self-signed certificate, from
+    // `openssl s_client -connect host:port </dev/null | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2`
+    // fingerprint: "AB:CD:…",
+
+    // Optional: ms without answer before failing (default: 30000).
+    // timeout: 30000,
   },
 }

@@ -4,10 +4,11 @@ Draws who gives a gift to whom, then tells each player by email or SMS.
 
 ## Install
 
-Node 22+:
+Node 24+:
 
 ```sh
 npm ci
+npm link # optional: puts `christmas-tombola` on the PATH, otherwise use ./cli.mjs
 ```
 
 Configuration (SMTP, SMS gateway): copy [`example-config.json5`](example-config.json5) to `~/.config/christmas-tombola/config.json5`.
@@ -55,7 +56,7 @@ christmas-tombola sms <game directory> <template> [<pattern>...]
 ```
 
 - Targets stay hidden, so the organizer can play too; `--show` reveals them (`draw`, `dump`, dry runs).
-- `draw` again after editing players: pairs of players who left are dropped, new players are inserted, and it lists who has a new target (send to them again).
+- `draw` again after editing players: pairs of players who left or breaking new groups are redrawn, new players are inserted, and it lists who has a new target (send to them again).
 - `email` and `sms` only print the messages; `--force` (`-f`) sends them. Failed players are listed and the exit code is 1.
 - Patterns (case-insensitive globs on displayed names) select players: `'a*' '!alice'`.
 - Before the draw (no `lottery.json`), templates can announce the game without `target`.
