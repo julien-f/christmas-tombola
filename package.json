@@ -24,8 +24,8 @@
   },
   "scripts": {
     "check": "sh scripts/check.sh",
-    "format": "prettier --write .",
-    "lint": "eslint .",
+    "format": "prettier --write . --cache",
+    "lint": "eslint . --cache --cache-strategy content --cache-location node_modules/.cache/eslint/",
     "prepare": "husky",
     "test": "node --test"
   },

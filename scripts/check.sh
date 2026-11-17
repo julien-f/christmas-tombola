@@ -41,7 +41,7 @@ check() {
   fi
 }
 
-check format '.' prettier --check . &
+check format '.' prettier --check . --cache &
 format=$!
 check lint '*.js *.cjs *.mjs .gitignore package.json' node --run lint &
 lint=$!
