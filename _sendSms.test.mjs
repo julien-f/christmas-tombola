@@ -95,6 +95,13 @@ describe("sendSms", () => {
     );
   });
 
+  it("fails with the reason when the gateway is unreachable", async () => {
+    await assert.rejects(
+      sendSms({ ...config, url: "http://127.0.0.1:0/" }, "+15550001", "Hi"),
+      /ECONNREFUSED/,
+    );
+  });
+
   it("fails with the gateway's message when it answers an error", async () => {
     status = 400;
     responseBody = '{"message":"invalid phone number"}';

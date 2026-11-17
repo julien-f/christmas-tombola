@@ -26,9 +26,8 @@ const SMS_LIMIT = 30;
 // ===================================================================
 
 function requireArg(name) {
-  const message = `Missing argument: ${name}`;
-
-  throw message;
+  // eslint-disable-next-line no-throw-literal
+  throw `missing argument: ${name}`;
 }
 
 function requireConfig(config, key) {
@@ -62,15 +61,34 @@ const sortByDisplayName = (players) =>
 
 const lotteryPath = (gameDir) => join(gameDir, "lottery.json");
 
+// Returns `parse(content)`; its errors are the user's to fix: no stack
+// trace, but the file.
+const parseFile = (path, parse) => (content) => {
+  try {
+    return parse(content);
+  } catch (error) {
+    // eslint-disable-next-line no-throw-literal
+    throw `${path}: ${error.message}`;
+  }
+};
+
 // Returns the players and the lottery (undefined if not drawn yet).
-const readGame = async (gameDir) => ({
-  players: parsePlayers(await readFile(join(gameDir, "players.json5"))),
-  lottery: await readFile(lotteryPath(gameDir)).then(JSON.parse, (error) => {
-    if (error.code !== "ENOENT") {
-      throw error;
-    }
-  }),
-});
+const readGame = async (gameDir) => {
+  const playersPath = join(gameDir, "players.json5");
+  return {
+    players: await readFile(playersPath).then(
+      parseFile(playersPath, parsePlayers),
+    ),
+    lottery: await readFile(lotteryPath(gameDir)).then(
+      parseFile(lotteryPath(gameDir), JSON.parse),
+      (error) => {
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
+      },
+    ),
+  };
+};
 
 // -------------------------------------------------------------------
 
@@ -201,7 +219,12 @@ const COMMANDS = Object.freeze({
       ],
     } = parseCommandArgs(args);
 
-    await sendSms(requireConfig(this.config, "sms"), phone, message);
+    try {
+      await sendSms(requireConfig(this.config, "sms"), phone, message);
+    } catch (error) {
+      // What this command checks, not a bug: no stack trace.
+      throw error.message;
+    }
     return `sent to ${phone}`;
   },
 });
@@ -224,14 +247,7 @@ async function sendToPlayers(
 
   const [{ players, lottery }, template] = await Promise.all([
     readGame(gameDir),
-    readFile(templateFile, "utf8").then((source) => {
-      try {
-        return compile(source);
-      } catch (error) {
-        // eslint-disable-next-line no-throw-literal
-        throw `${templateFile}: ${error.message}`;
-      }
-    }),
+    readFile(templateFile, "utf8").then(parseFile(templateFile, compile)),
   ]);
 
   const isSelected = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
@@ -354,15 +370,20 @@ Commands:
 Options:
   --show       show targets (hidden by default)
   -f, --force  email, sms: really send (only printed by default)
-  -h, --help   show this help (as <command>)
+  -h, --help   show this help
 
 ${pkg.name} v${pkg.version}
 `;
 
-async function main([commandName, ...commandArgs]) {
-  if (commandName === "-h" || commandName === "--help") {
+async function main(args) {
+  // Before `--`, after which `-h` is a pattern.
+  const end = args.indexOf("--");
+  const options = end === -1 ? args : args.slice(0, end);
+  if (options.includes("-h") || options.includes("--help")) {
     return help;
   }
+
+  const [commandName, ...commandArgs] = args;
 
   if (!commandName) {
     // eslint-disable-next-line no-throw-literal
@@ -398,7 +419,8 @@ main(process.argv.slice(2)).then(
     }
   },
   (error) => {
-    console.error(error);
+    // A system error (file not found…) is the user's to fix: no stack trace.
+    console.error(error?.syscall === undefined ? error : error.message);
     process.exitCode = 1;
   },
 );

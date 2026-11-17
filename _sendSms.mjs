@@ -52,6 +52,10 @@ export async function sendSms(
     if (error.name === "TimeoutError") {
       throw new Error(`SMS gateway did not answer within ${timeout} ms`);
     }
+    // fetch() only says "fetch failed", the reason is in `cause`.
+    if (error.cause !== undefined) {
+      throw new Error(`SMS gateway unreachable: ${error.cause.message}`);
+    }
     throw error;
   }
   if (!res.ok) {
