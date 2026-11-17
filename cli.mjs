@@ -79,7 +79,7 @@ const COMMANDS = Object.freeze({
 
     if (dropped.length !== 0) {
       console.warn(
-        "dropped %d pair(s) involving players who left%s",
+        "dropped %d pair(s): player left or rules changed%s",
         dropped.length,
         show ? ": " + dropped.map((pair) => pair.join(" → ")).join(", ") : "",
       );

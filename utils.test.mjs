@@ -262,12 +262,20 @@ describe("draw with an existing lottery", () => {
     }
   });
 
-  it("rejects pairs breaking the current rules", () => {
-    const players = makePlayers([["A", "B"], "C", "D"]);
-    assert.throws(() => draw(players, { A: "B" }), /existing pairs.*A → B/);
-    assert.throws(() => draw(players, { A: "A" }), /existing pairs/);
-    assert.throws(() => draw(players, { C: "D", D: "C" }), /existing pairs/);
-    assert.throws(() => draw(players, { A: "C", B: "C" }), /existing pairs/);
+  it("redraws pairs breaking the current rules", () => {
+    const players = makePlayers([["A", "B"], "C", "D", "E"]);
+    for (const [previous, expectedDropped] of [
+      [{ A: "B" }, [["A", "B"]]], // now in the same group
+      [{ A: "A" }, [["A", "A"]]],
+      [{ C: "D", D: "C" }, [["D", "C"]]],
+      [{ A: "C", B: "C" }, [["B", "C"]]],
+    ]) {
+      const { lottery, dropped } = draw(players, previous, {
+        random: seededRandom(0),
+      });
+      assertValid(players, lottery);
+      assert.deepEqual(dropped, expectedDropped);
+    }
   });
 });
 

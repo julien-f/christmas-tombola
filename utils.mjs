@@ -113,36 +113,31 @@ const MAX_SEARCH_STEPS = 1e6;
 // A player never draws themselves, someone sharing a group with them,
 // or the player who draws them.
 //
-// Pairs involving someone who no longer plays are dropped; other pairs
-// are kept unless the open slots cannot be filled without redrawing
-// some of them.
+// Pairs involving someone who no longer plays or breaking the current
+// rules (e.g. after regrouping) are dropped; other pairs are kept unless
+// the open slots cannot be filled without redrawing some of them.
 //
 // Returns the lottery, the dropped pairs and the ids of the players
 // whose target is new.
 export function draw(players, previous = {}, { random = Math.random } = {}) {
   const lottery = { __proto__: null };
-  const dropped = [];
-  for (const [source, target] of Object.entries(previous)) {
-    if (source in players && target in players) {
-      lottery[source] = target;
-    } else {
-      dropped.push([source, target]);
-    }
-  }
-
   const canDraw = (source, target) =>
     !players[source].excluded.has(target) && lottery[target] !== source;
 
   const targeted = new Set();
-  const invalid = [];
-  for (const [source, target] of Object.entries(lottery)) {
-    if (!canDraw(source, target) || targeted.has(target)) {
-      invalid.push(`${source} → ${target}`);
+  const dropped = [];
+  for (const [source, target] of Object.entries(previous)) {
+    if (
+      source in players &&
+      target in players &&
+      !targeted.has(target) &&
+      canDraw(source, target)
+    ) {
+      lottery[source] = target;
+      targeted.add(target);
+    } else {
+      dropped.push([source, target]);
     }
-    targeted.add(target);
-  }
-  if (invalid.length !== 0) {
-    throw new Error(`existing pairs break the rules: ${invalid.join(", ")}`);
   }
 
   const ids = Object.keys(players);
