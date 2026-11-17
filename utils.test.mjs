@@ -450,17 +450,18 @@ describe("compileMailTemplate", () => {
   it("renders fields, text and HTML", () => {
     const render = compileMailTemplate(
       [
-        "---",
-        "subject: Gift for {{player.name}}",
-        "bcc: { name: Me, address: me@example.com }",
-        "---",
+        "+++",
+        'subject = "{{player.name}}, your gift"',
+        'bcc = { name = "Me", address = "me@example.com" }',
+        "+++",
+        "",
         "Hi {{player.name}}, you give to **{{target.name}}**.",
       ].join("\n"),
     );
     assert.deepEqual(
       render({ player: { name: "Tom & Jerry" }, target: { name: "<b>A</b>" } }),
       {
-        subject: "Gift for Tom & Jerry",
+        subject: "Tom & Jerry, your gift",
         bcc: { name: "Me", address: "me@example.com" },
         text: "Hi Tom & Jerry, you give to **<b>A</b>**.",
         html: "<p>Hi Tom &amp; Jerry, you give to <strong>&lt;b&gt;A&lt;/b&gt;</strong>.</p>\n",
@@ -472,13 +473,28 @@ describe("compileMailTemplate", () => {
     const context = { player: { name: "A" } };
     assert.throws(
       () =>
-        compileMailTemplate("---\nsubject: Hi {{player.nmae}}\n---\n")(context),
+        compileMailTemplate('+++\nsubject = "{{player.nmae}}"\n+++\n')(context),
       /"nmae" not defined/,
     );
     assert.throws(
       () => compileMailTemplate("{{player.nmae}}")(context),
       /"nmae" not defined/,
     );
+  });
+
+  it("passes non-string fields unchanged", () => {
+    const { date } = compileMailTemplate("+++\ndate = 2026-12-24\n+++\n")({});
+    assert(date instanceof Date);
+    assert.equal(date.toISOString(), "2026-12-24");
+  });
+
+  it("accepts a body without front matter", () => {
+    assert.equal(compileMailTemplate("Hi\n+++\n")({}).text, "Hi\n+++\n");
+    assert.equal(compileMailTemplate("+++ Hi\n")({}).text, "+++ Hi\n");
+  });
+
+  it("rejects an unclosed front matter", () => {
+    assert.throws(() => compileMailTemplate('+++\nsubject = "a"\n'), /\+\+\+/);
   });
 });
 

@@ -1,18 +1,24 @@
 import { marked } from "marked";
-import frontMatter from "front-matter";
 import handlebars from "handlebars";
 import JSON5 from "json5";
 import { matchesGlob } from "node:path";
 import nodemailer from "nodemailer";
+import { parse as parseToml } from "smol-toml";
 
 // ===================================================================
 
-// Applies `fn` to every leaf of a JSON-like value.
+const isPlainObject = (value) =>
+  value !== null &&
+  typeof value === "object" &&
+  [Object.prototype, null].includes(Object.getPrototypeOf(value));
+
+// Applies `fn` to every leaf of a JSON-like value; other objects (dates…)
+// are leaves.
 function mapLeaves(value, fn) {
   if (Array.isArray(value)) {
     return value.map((item) => mapLeaves(item, fn));
   }
-  if (value !== null && typeof value === "object") {
+  if (isPlainObject(value)) {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, mapLeaves(item, fn)]),
     );
@@ -28,13 +34,31 @@ const compile = (source, options) =>
 export const compileTextTemplate = (source) =>
   compile(source, { noEscape: true });
 
+// Blank lines after it are not part of the body.
+const FRONT_MATTER = /^\+\+\+\r?\n(?:([^]*?)\r?\n)?\+\+\+(?:\r?\n|$)(?:\r?\n)*/;
+
+// Splits the TOML front matter, between `+++` lines, from the body.
+function parseFrontMatter(source) {
+  if (!/^\+\+\+\r?\n/.test(source)) {
+    return { attributes: {}, body: source };
+  }
+  const match = FRONT_MATTER.exec(source);
+  if (match === null) {
+    throw new Error("front matter not closed by a `+++` line");
+  }
+  return {
+    attributes: parseToml(match[1] ?? ""),
+    body: source.slice(match[0].length),
+  };
+}
+
 // Compiles a mail template: a Markdown body and a front matter of
 // Nodemailer fields (subject, etc.), all Handlebars templates.
 //
 // Returns a function which, given a context, returns Nodemailer data
 // with `text` and `html` parts.
 export function compileMailTemplate(source) {
-  const { attributes, body } = frontMatter(source);
+  const { attributes, body } = parseFrontMatter(source);
 
   const fields = mapLeaves(attributes, (value) =>
     typeof value === "string" ? compileTextTemplate(value) : value,

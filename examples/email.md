@@ -1,6 +1,6 @@
----
-subject: Your Christmas draw
----
++++
+subject = "Your Christmas draw"
++++
 
 Hi {{player.name}},
 
