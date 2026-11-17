@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 
 import {
   compileMailTemplate,
+  compileTextTemplate,
   createGlobMatcher,
   draw,
+  hideTarget,
   parsePlayers,
 } from "./utils.mjs";
 
@@ -435,5 +437,60 @@ describe("compileMailTemplate", () => {
         html: "<p>Hi Tom &amp; Jerry, you give to <strong>&lt;b&gt;A&lt;/b&gt;</strong>.</p>\n",
       },
     );
+  });
+
+  it("rejects missing fields in the front matter and the body", () => {
+    const context = { player: { name: "A" } };
+    assert.throws(
+      () =>
+        compileMailTemplate("---\nsubject: Hi {{player.nmae}}\n---\n")(context),
+      /"nmae" not defined/,
+    );
+    assert.throws(
+      () => compileMailTemplate("{{player.nmae}}")(context),
+      /"nmae" not defined/,
+    );
+  });
+});
+
+describe("compileTextTemplate", () => {
+  it("rejects missing fields instead of rendering them empty", () => {
+    const render = compileTextTemplate("{{target.nmae}}");
+    assert.throws(
+      () => render({ target: { name: "A" } }),
+      /"nmae" not defined/,
+    );
+  });
+
+  it("rejects a target before the draw", () => {
+    const render = compileTextTemplate("{{target.name}}");
+    assert.throws(() => render({ target: undefined }), /"name" not defined/);
+  });
+
+  it("accepts missing fields in conditions", () => {
+    const render = compileTextTemplate("{{#if target}}{{target.name}}{{/if}}");
+    assert.equal(render({ target: undefined }), "");
+  });
+
+  it("reports syntax errors when compiling", () => {
+    assert.throws(() => compileTextTemplate("{{#if a}}"), /Parse error/);
+  });
+});
+
+describe("hideTarget", () => {
+  const players = makePlayers(["A", "B"]);
+  players.A.disambiguation = "junior";
+  const hidden = hideTarget(players);
+
+  it("has every field any player has, hidden", () => {
+    const render = compileTextTemplate(
+      "{{target}} {{target.displayName}} {{target.disambiguation}}",
+    );
+    assert.equal(render({ target: hidden }), "[target] [target] [target]");
+  });
+
+  it("still rejects unknown fields", () => {
+    const render = compileTextTemplate("{{target.nmae}}");
+    assert.throws(() => render({ target: hidden }), /"nmae" not defined/);
   });
 });

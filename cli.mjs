@@ -5,13 +5,14 @@ import { load as loadConfig } from "app-conf";
 import { readFile, writeFile } from "node:fs/promises";
 import pkg from "./package.json" with { type: "json" };
 import { parseArgs } from "node:util";
-import Handlebars from "handlebars";
 
 import {
   compileMailTemplate,
+  compileTextTemplate,
   createGlobMatcher,
   createMailer,
   draw,
+  hideTarget,
   parsePlayers,
 } from "./utils.mjs";
 import { sendSms } from "./_sendSms.mjs";
@@ -150,7 +151,7 @@ const COMMANDS = Object.freeze({
   async sms(args) {
     await sendToPlayers(args, {
       contact: "phone",
-      compile: (source) => Handlebars.compile(source, { noEscape: true }),
+      compile: compileTextTemplate,
       format: (message) => message,
       createSender: () => {
         const config = requireConfig(this.config, "sms");
@@ -172,29 +173,9 @@ const COMMANDS = Object.freeze({
   },
 });
 
-// Every field is "[target]", even those the real target lacks, so that
-// dry runs reveal nothing about it.
-const HIDDEN_TARGET = new Proxy(
-  {},
-  {
-    get: (_, key) =>
-      key === Symbol.toPrimitive
-        ? () => "[target]"
-        : typeof key === "string" && key !== "toHTML"
-          ? "[target]"
-          : undefined,
-    // Handlebars only reads own properties.
-    getOwnPropertyDescriptor: () => ({
-      value: "[target]",
-      configurable: true,
-      enumerable: true,
-    }),
-  },
-);
-
-// Renders the template for each selected player and sends it, one at a
-// time, if `--force`; otherwise prints it, with targets hidden unless
-// `--show`.
+// Renders the template for every selected player, then, if all succeed
+// and `--force`, sends them one at a time; otherwise prints them, with
+// targets hidden unless `--show`.
 async function sendToPlayers(args, { contact, compile, format, createSender }) {
   const {
     values: { force, show },
@@ -207,13 +188,22 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
 
   const [{ players, lottery }, template] = await Promise.all([
     readGame(gameDir),
-    readFile(templateFile, "utf8").then(compile),
+    readFile(templateFile, "utf8").then((source) => {
+      try {
+        return compile(source);
+      } catch (error) {
+        // eslint-disable-next-line no-throw-literal
+        throw `${templateFile}: ${error.message}`;
+      }
+    }),
   ]);
 
   // `send(player, message)`, created upfront to check the configuration.
   const send = force ? await createSender() : undefined;
   const isSelected = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
   const sortedPlayers = sortByDisplayName(players);
+  const hiddenTarget = hideTarget(players);
+  const messages = [];
   const failures = [];
   let selected = 0;
 
@@ -238,28 +228,27 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
         failures.push(name);
         continue;
       }
-      if (!force && !show) {
-        target = HIDDEN_TARGET;
-      }
     }
 
-    const message = template({ player, players: sortedPlayers, target });
-
-    if (!force) {
-      console.log(
-        "--- to %s (%s)\n%s\n",
-        name,
-        player[contact],
-        format(message),
-      );
-      continue;
-    }
-
+    const render = (target) =>
+      template({ player, players: sortedPlayers, target });
     try {
-      await send(player, message);
-      console.log("%s: sent to %s", name, player[contact]);
+      // Rendered with the real target even if hidden: it can fail where
+      // the hidden one would not.
+      let message = render(target);
+      if (target !== undefined && !force && !show) {
+        message = render(hiddenTarget);
+      }
+      messages.push({ player, message });
     } catch (error) {
-      console.error("%s: failed: %s", name, error.message);
+      // The details could tell which fields the target has.
+      console.error(
+        "%s: %s",
+        name,
+        show
+          ? `${templateFile}: ${error.message}`
+          : "template error, use --show for details",
+      );
       failures.push(name);
     }
   }
@@ -268,8 +257,36 @@ async function sendToPlayers(args, { contact, compile, format, createSender }) {
     // eslint-disable-next-line no-throw-literal
     throw "no player selected";
   }
+
+  if (force && failures.length !== 0) {
+    // eslint-disable-next-line no-throw-literal
+    throw "nothing sent, fix the errors above";
+  }
+
+  if (force) {
+    for (const { player, message } of messages) {
+      const name = player.displayName;
+      try {
+        await send(player, message);
+        console.log("%s: sent to %s", name, player[contact]);
+      } catch (error) {
+        console.error("%s: failed: %s", name, error.message);
+        failures.push(name);
+      }
+    }
+  } else {
+    for (const { player, message } of messages) {
+      console.log(
+        "--- to %s (%s)\n%s\n",
+        player.displayName,
+        player[contact],
+        format(message),
+      );
+    }
+  }
+
   if (failures.length !== 0) {
-    console.error("not sent to: %s", failures.join(", "));
+    console.error("failed for: %s", failures.join(", "));
     process.exitCode = 1;
   } else if (!force) {
     console.log("dry run: nothing sent, use --force to send");

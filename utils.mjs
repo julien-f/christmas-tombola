@@ -20,6 +20,14 @@ function mapLeaves(value, fn) {
   return fn(value);
 }
 
+// Strict: a missing field throws instead of rendering empty. Parsed now
+// so that syntax errors show up before the first render.
+const compile = (source, options) =>
+  handlebars.compile(handlebars.parse(source), { strict: true, ...options });
+
+export const compileTextTemplate = (source) =>
+  compile(source, { noEscape: true });
+
 // Compiles a mail template: a Markdown body and a front matter of
 // Nodemailer fields (subject, etc.), all Handlebars templates.
 //
@@ -29,13 +37,11 @@ export function compileMailTemplate(source) {
   const { attributes, body } = frontMatter(source);
 
   const fields = mapLeaves(attributes, (value) =>
-    typeof value === "string"
-      ? handlebars.compile(value, { noEscape: true })
-      : value,
+    typeof value === "string" ? compileTextTemplate(value) : value,
   );
-  const text = handlebars.compile(body, { noEscape: true });
+  const text = compileTextTemplate(body);
   // Escaped values so that names cannot inject HTML.
-  const html = handlebars.compile(body);
+  const html = compile(body);
 
   return (context) => ({
     ...mapLeaves(fields, (value) =>
@@ -61,6 +67,19 @@ export function createGlobMatcher(patterns) {
   return (entry) =>
     !matches(entry, exclude) &&
     (include.length === 0 || matches(entry, include));
+}
+
+// A target for dry runs: every field any player has, so that a typo
+// still fails, all "[target]", so that nothing about the real target
+// shows.
+export function hideTarget(players) {
+  const hidden = { toString: () => "[target]" };
+  for (const player of Object.values(players)) {
+    for (const key of Object.keys(player)) {
+      hidden[key] = "[target]";
+    }
+  }
+  return hidden;
 }
 
 // -------------------------------------------------------------------

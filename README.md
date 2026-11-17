@@ -64,7 +64,7 @@ christmas-tombola sms-test <phone> [<message>]
 
 - Targets stay hidden, so the organizer can play too; `--show` reveals them (`draw`, `dump`, dry runs).
 - `draw` again after editing players: pairs of players who left or breaking new groups are redrawn, new players are inserted, and it lists who has a new target (send to them again).
-- `email` and `sms` only print the messages; `--force` (`-f`) sends them. Failed players are listed and the exit code is 1.
+- `email` and `sms` only print the messages; `--force` (`-f`) sends them, unless a message fails to render: then nothing is sent. Failed players are listed and the exit code is 1.
 - `sms-test` sends one SMS right away, to check the gateway configuration.
 - Patterns (case-insensitive globs on displayed names) select players: `'a*' '!alice'`.
 - Before the draw (no `lottery.json`), templates can announce the game without `target`.
@@ -72,6 +72,8 @@ christmas-tombola sms-test <phone> [<message>]
 ## Templates
 
 [Handlebars](https://handlebarsjs.com/) with `player`, `target` (the player to give to) and `players` (all, sorted by name).
+
+A missing field is an error, not an empty string: put optional fields in `{{#if player.phone}}…{{/if}}`, and `target` in `{{#if target}}…{{/if}}` in templates also sent before the draw.
 
 Email: Markdown body (sent as text and HTML), Nodemailer fields in the front matter; the recipient is always the player.
 
