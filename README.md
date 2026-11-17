@@ -54,7 +54,7 @@ christmas-tombola sms-test <phone> [<message>]
 ```
 
 - `<template>` is a path from the current directory, e.g. `games/2026/email.md`.
-- Patterns (case-insensitive globs on displayed names) select players, `!` excludes: `'a*' '!alice'`.
+- Patterns (case-insensitive globs on displayed names) select players, `!` excludes: `'a*' '!alice'`. A pattern matching no player is likely a typo: a warning, and nothing sent with `--force`.
 - Targets stay hidden, so the organizer can play too; `--show` reveals them (`draw`, `dump`, dry runs).
 - Rerunning `draw` keeps existing pairs: it redraws only pairs that involve a removed player or break a new group, inserts new players, and lists the players whose target changed.
 - `dump` prints the players as read from `players.json5`, with their targets under `--show`: `dump games/2026 heidi --show` shows only Heidi's.

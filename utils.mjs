@@ -93,6 +93,13 @@ export function createGlobMatcher(patterns) {
     (include.length === 0 || matches(entry, include));
 }
 
+// Patterns (with their `!`) matching none of `entries`: likely typos.
+export const unmatchedPatterns = (patterns, entries) =>
+  patterns.filter((pattern) => {
+    const glob = pattern[0] === "!" ? pattern.slice(1) : pattern;
+    return !entries.some((entry) => matchesGlob(entry, glob));
+  });
+
 // A pattern selecting `name`. Other characters become `?`: escaping glob
 // syntax (`!`, braces…) does not work reliably.
 export const namePattern = (name) => name.replace(/[^\p{L}\p{N} .'_-]/gu, "?");

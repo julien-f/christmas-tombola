@@ -16,6 +16,7 @@ import {
   namePattern,
   parsePlayers,
   shellQuote,
+  unmatchedPatterns,
   unreachablePlayers,
 } from "./utils.mjs";
 import { sendSms, smsSegments } from "./_sendSms.mjs";
@@ -59,9 +60,24 @@ const sortByDisplayName = (players) =>
     a.displayName.localeCompare(b.displayName),
   );
 
-// Case-insensitive, on displayed names.
-const createPlayerMatcher = (patterns) => {
-  const matches = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
+// Case-insensitive, on displayed names. A pattern matching no player is
+// a likely typo: someone left out, or not excluded.
+const createPlayerMatcher = (players, patterns, { force = false } = {}) => {
+  const lowerPatterns = patterns.map((_) => _.toLowerCase());
+  const unmatched = unmatchedPatterns(
+    lowerPatterns,
+    Object.values(players).map((player) => player.displayName.toLowerCase()),
+  );
+  if (unmatched.length !== 0) {
+    const message = `no player matches: ${unmatched.join(", ")} (patterns match displayed names, see dump)`;
+    if (force) {
+      // eslint-disable-next-line no-throw-literal
+      throw `${message}, nothing sent`;
+    }
+    console.warn(message);
+  }
+
+  const matches = createGlobMatcher(lowerPatterns);
   return (player) => matches(player.displayName.toLowerCase());
 };
 
@@ -165,7 +181,7 @@ const COMMANDS = Object.freeze({
       }
     }
 
-    const isSelected = createPlayerMatcher(patterns);
+    const isSelected = createPlayerMatcher(players, patterns);
     return Object.fromEntries(
       Object.entries(players).filter(([, player]) => isSelected(player)),
     );
@@ -259,7 +275,7 @@ async function sendToPlayers(
     readFile(templateFile, "utf8").then(parseFile(templateFile, compile)),
   ]);
 
-  const isSelected = createPlayerMatcher(patterns);
+  const isSelected = createPlayerMatcher(players, patterns, { force });
   const sortedPlayers = sortByDisplayName(players);
   const hiddenTarget = hideTarget(players);
   const messages = [];

@@ -11,6 +11,7 @@ import {
   parsePlayers,
   namePattern,
   shellQuote,
+  unmatchedPatterns,
   unreachablePlayers,
 } from "./utils.mjs";
 
@@ -443,6 +444,15 @@ describe("createGlobMatcher", () => {
   it("excludes names matching a `!` pattern", () => {
     assert.deepEqual(select(["!alice*"]), ["bob", "tom & jerry"]);
     assert.deepEqual(select(["a*", "!alice"]), ["alice (junior)"]);
+  });
+});
+
+describe("unmatchedPatterns", () => {
+  it("lists include and `!` patterns matching no name", () => {
+    assert.deepEqual(
+      unmatchedPatterns(["a*", "frnak", "!bob", "!zed"], ["alice", "bob"]),
+      ["frnak", "!zed"],
+    );
   });
 });
 
