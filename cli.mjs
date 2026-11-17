@@ -264,6 +264,7 @@ async function sendToPlayers(
   const hiddenTarget = hideTarget(players);
   const messages = [];
   const failures = [];
+  const inPerson = [];
   let selected = 0;
 
   for (const player of sortedPlayers) {
@@ -274,7 +275,11 @@ async function sendToPlayers(
     ++selected;
 
     if (player[contact] === undefined) {
-      console.warn("%s: no %s, skipped", name, contact);
+      if (player.inPerson) {
+        inPerson.push(player);
+      } else {
+        console.warn("%s: no %s, skipped", name, contact);
+      }
       continue;
     }
 
@@ -345,6 +350,20 @@ async function sendToPlayers(
         format(message),
       );
     }
+  }
+
+  if (inPerson.length !== 0) {
+    // When sending, the organizer is telling everyone: no need to hide.
+    const target = (player) =>
+      (force || show) && players[lottery?.[player.id]]?.displayName;
+    console.log(
+      "to tell in person: %s",
+      inPerson
+        .map((player) =>
+          [player.displayName, target(player)].filter(Boolean).join(" → "),
+        )
+        .join(", "),
+    );
   }
 
   if (failures.length !== 0) {
