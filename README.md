@@ -49,6 +49,7 @@ One directory per game, e.g. `games/2026/`:
 ]
 ```
 
+- `draw` refuses a player with neither `email` nor `phone`, unless `inPerson: true` (the organizer tells them).
 - `id` defaults to the displayed name; set it to rename a player without breaking `lottery.json`.
 - Nobody draws themselves, someone of their groups, or the player who draws them.
 

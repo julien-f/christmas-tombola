@@ -8,6 +8,7 @@ import {
   draw,
   hideTarget,
   parsePlayers,
+  unreachablePlayers,
 } from "./utils.mjs";
 
 // Deterministic PRNG (mulberry32) so that failures are reproducible.
@@ -94,6 +95,16 @@ describe("parsePlayers", () => {
 
   it("rejects duplicate ids", () => {
     assert.throws(() => makePlayers(["A", "A"]), /duplicate player id: A/);
+  });
+
+  it("lists players without contact, unless told in person", () => {
+    const players = parsePlayers(`[
+      { name: "A", email: "a" },
+      { name: "B", phone: "+1" },
+      { name: "C" },
+      { name: "D", inPerson: true },
+    ]`);
+    assert.deepEqual(unreachablePlayers(players), [players.C]);
   });
 
   it("converts ids to strings", () => {

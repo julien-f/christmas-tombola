@@ -14,6 +14,7 @@ import {
   draw,
   hideTarget,
   parsePlayers,
+  unreachablePlayers,
 } from "./utils.mjs";
 import { sendSms } from "./_sendSms.mjs";
 
@@ -76,6 +77,15 @@ const COMMANDS = Object.freeze({
     } = parseCommandArgs(args);
 
     const { players, lottery: previous } = await readGame(gameDir);
+
+    const unreachable = unreachablePlayers(players);
+    if (unreachable.length !== 0) {
+      // eslint-disable-next-line no-throw-literal
+      throw `neither email nor phone for: ${unreachable
+        .map((player) => player.displayName)
+        .join(", ")} (set \`inPerson: true\` to tell them in person)`;
+    }
+
     const { lottery, dropped, notify } = draw(players, previous);
 
     if (dropped.length !== 0) {

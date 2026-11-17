@@ -291,10 +291,6 @@ export function parsePlayers(json) {
     }
     players[id] = entry;
 
-    if (entry.email === undefined && entry.phone === undefined) {
-      console.warn("WARNING: player %s has neither email or phone defined", id);
-    }
-
     groups.forEach((group) => group.push(id));
     playerGroups.set(entry, groups);
   };
@@ -308,6 +304,15 @@ export function parsePlayers(json) {
 
   return players;
 }
+
+// Players who would never learn their target.
+export const unreachablePlayers = (players) =>
+  Object.values(players).filter(
+    (player) =>
+      player.email === undefined &&
+      player.phone === undefined &&
+      player.inPerson !== true,
+  );
 
 // -------------------------------------------------------------------
 
