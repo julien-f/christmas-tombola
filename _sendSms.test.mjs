@@ -32,8 +32,11 @@ describe("sendSms", () => {
         req.on("data", (chunk) => (body += chunk));
         req.on("end", () => {
           requests.push({ method: req.method, url: req.url, body });
-          res.statusCode = status;
-          res.end();
+          // No status: never answer.
+          if (status !== undefined) {
+            res.statusCode = status;
+            res.end();
+          }
         });
       });
     } finally {
@@ -47,7 +50,10 @@ describe("sendSms", () => {
     };
   });
 
-  after(() => server.close());
+  after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
 
   beforeEach(() => {
     requests = [];
@@ -86,6 +92,22 @@ describe("sendSms", () => {
     await assert.rejects(sendSms(config, "+15550001", "Hi"), {
       code: "DEPTH_ZERO_SELF_SIGNED_CERT",
     });
+    assert.deepEqual(requests, []);
+  });
+
+  it("fails when the gateway does not answer in time", async () => {
+    status = undefined;
+    await assert.rejects(
+      sendSms({ ...config, fingerprint, timeout: 50 }, "+15550001", "Hi"),
+      /did not answer within 50 ms/,
+    );
+  });
+
+  it("fails without sending when the fingerprint is not a string", async () => {
+    await assert.rejects(
+      sendSms({ ...config, fingerprint: null }, "+15550001", "Hi"),
+      /fingerprint must be a string/,
+    );
     assert.deepEqual(requests, []);
   });
 

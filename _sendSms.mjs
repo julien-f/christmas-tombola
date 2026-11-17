@@ -8,11 +8,15 @@ const normalizeFingerprint = (fingerprint) =>
 // The certificate is verified against the system CAs unless
 // `fingerprint` (SHA-256) is set: then only that exact certificate is
 // accepted, e.g. a self-signed one.
-export function sendSms(
-  { hostname, port, password, fingerprint },
+export async function sendSms(
+  { hostname, port, password, fingerprint, timeout = 30e3 },
   phone,
   message,
 ) {
+  if (fingerprint !== undefined && typeof fingerprint !== "string") {
+    throw new Error("sms.fingerprint must be a string");
+  }
+
   const body = new URLSearchParams({ message, password, phone }).toString();
 
   return new Promise((resolve, reject) => {
@@ -40,6 +44,9 @@ export function sendSms(
       },
     );
     req.on("error", reject);
+    req.setTimeout(timeout, () =>
+      req.destroy(new Error(`SMS gateway did not answer within ${timeout} ms`)),
+    );
 
     if (fingerprint === undefined) {
       req.end(body);
