@@ -1,0 +1,21 @@
+[
+  // A group: its members never draw each other.
+  [
+    { name: "Alice", email: "alice@example.com" },
+    { name: "Bob", phone: "+15550001" },
+    // Groups can be nested: members of the outer group never draw
+    // anyone of the inner one, and the other way around.
+    [
+      { name: "Carol", email: "carol@example.com" },
+      { name: "Dan", email: "dan@example.com" },
+    ],
+  ],
+  // Same names are told apart: displayed as "Alice (junior)".
+  { name: "Alice", disambiguation: "junior", email: "alice.jr@example.com" },
+  { name: "Frank", email: "frank@example.com", phone: "+15550002" },
+  { name: "Grace", email: "grace@example.com" },
+  // No email or phone: the organizer tells them.
+  { name: "Heidi", inPerson: true },
+  // Kept in the file but not in the draw.
+  { name: "Eve", email: "eve@example.com", participate: false },
+]

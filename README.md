@@ -24,31 +24,10 @@ SMS are sent by an Android phone running [SMS Gate](https://sms-gate.app) in Loc
 
 One directory per game, e.g. `games/2026/`:
 
-- `players.json5`: the players, written by hand;
+- `players.json5`: the players, written by hand, see [`examples/players.json5`](examples/players.json5) (groups, same names, players told in person or left out);
 - `lottery.json`: the draw (giver id → receiver id), written by `draw`.
 
-```json5
-[
-  // A group: its members never draw each other.
-  [
-    { name: "Alice", email: "alice@example.com" },
-    { name: "Bob", phone: "+15550001" },
-    // Groups can be nested: members of the outer group never draw
-    // anyone of the inner one, and the other way around.
-    [
-      { name: "Carol", email: "carol@example.com" },
-      { name: "Dan", email: "dan@example.com" },
-    ],
-  ],
-  // Same names are told apart: displayed as "Alice (junior)".
-  { name: "Alice", disambiguation: "junior", email: "alice.jr@example.com" },
-  { name: "Frank", email: "frank@example.com" },
-  { name: "Grace", email: "grace@example.com" },
-  { name: "Heidi", email: "heidi@example.com" },
-  // Kept in the file but not in the draw.
-  { name: "Eve", email: "eve@example.com", participate: false },
-]
-```
+To try it: `cp -r examples games/test`, then `christmas-tombola draw games/test`.
 
 - `draw` refuses a player with neither `email` nor `phone`, unless `inPerson: true` (the organizer tells them).
 - `id` defaults to the displayed name; set it to rename a player without breaking `lottery.json`.
@@ -77,17 +56,8 @@ christmas-tombola sms-test <phone> [<message>]
 
 A missing field is an error, not an empty string: put optional fields in `{{#if player.phone}}…{{/if}}`, and `target` in `{{#if target}}…{{/if}}` in templates also sent before the draw.
 
-Email: Markdown body (sent as text and HTML), Nodemailer fields in the front matter; the recipient is always the player.
-
-```md
----
-subject: Your Christmas draw
----
-
-Hi {{player.name}}, this year you give a gift to **{{target.displayName}}**.
-```
-
-SMS: plain text.
+- Email: Markdown body (sent as text and HTML), Nodemailer fields in the front matter; the recipient is always the player. See [`examples/email.md`](examples/email.md), and [`examples/announce.md`](examples/announce.md) for before the draw.
+- SMS: plain text, see [`examples/sms.txt`](examples/sms.txt).
 
 ## License
 

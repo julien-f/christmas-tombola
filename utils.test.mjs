@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
@@ -528,5 +529,43 @@ describe("hideTarget", () => {
   it("still rejects unknown fields", () => {
     const render = compileTextTemplate("{{target.nmae}}");
     assert.throws(() => render({ target: hidden }), /"nmae" not defined/);
+  });
+});
+
+describe("examples", () => {
+  const read = (file) =>
+    readFileSync(new URL(`examples/${file}`, import.meta.url), "utf8");
+  const players = parsePlayers(read("players.json5"));
+  const all = Object.values(players);
+
+  it("can be drawn", () => {
+    assert.deepEqual(unreachablePlayers(players), []);
+    assertValid(players, drawLottery(players, {}, { random: seededRandom(0) }));
+  });
+
+  it("renders the templates for every player", () => {
+    const lottery = drawLottery(players, {}, { random: seededRandom(0) });
+    const email = compileMailTemplate(read("email.md"));
+    const sms = compileTextTemplate(read("sms.txt"));
+    for (const player of all) {
+      const context = {
+        player,
+        players: all,
+        target: players[lottery[player.id]],
+      };
+      const name = context.target.displayName;
+      assert(email(context).text.includes(name), name);
+      assert(sms(context).includes(name), name);
+    }
+  });
+
+  it("announces the game before the draw", () => {
+    const announce = compileMailTemplate(read("announce.md"));
+    const { text } = announce({
+      player: all[0],
+      players: all,
+      target: undefined,
+    });
+    assert.match(text, /- Grace\n/);
   });
 });
