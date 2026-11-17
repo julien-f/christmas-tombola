@@ -20,7 +20,7 @@
     "christmas-tombola": "cli.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "dependencies": {
     "app-conf": "^6.0.0",
@@ -28,7 +28,6 @@
     "handlebars": "^4.7.10",
     "json5": "^2.2.3",
     "marked": "^18.2.1",
-    "micromatch": "^4.0.8",
     "nodemailer": "^10.6.0"
   },
   "scripts": {

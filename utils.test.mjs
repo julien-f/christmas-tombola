@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { compileMailTemplate, draw, parsePlayers } from "./utils.mjs";
+import {
+  compileMailTemplate,
+  createGlobMatcher,
+  draw,
+  parsePlayers,
+} from "./utils.mjs";
 
 // Deterministic PRNG (mulberry32) so that failures are reproducible.
 function seededRandom(seed) {
@@ -276,6 +281,32 @@ describe("draw with an existing lottery", () => {
       assertValid(players, lottery);
       assert.deepEqual(dropped, expectedDropped);
     }
+  });
+});
+
+describe("createGlobMatcher", () => {
+  const select = (patterns) =>
+    ["alice", "alice (junior)", "bob", "tom & jerry"].filter(
+      createGlobMatcher(patterns),
+    );
+
+  it("selects everyone without patterns", () => {
+    assert.equal(select([]).length, 4);
+  });
+
+  it("selects names matching any pattern", () => {
+    assert.deepEqual(select(["alice*", "bob"]), [
+      "alice",
+      "alice (junior)",
+      "bob",
+    ]);
+    assert.deepEqual(select(["tom ?"]), []);
+    assert.deepEqual(select(["tom & *"]), ["tom & jerry"]);
+  });
+
+  it("excludes names matching a `!` pattern", () => {
+    assert.deepEqual(select(["!alice*"]), ["bob", "tom & jerry"]);
+    assert.deepEqual(select(["a*", "!alice"]), ["alice (junior)"]);
   });
 });
 

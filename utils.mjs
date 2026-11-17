@@ -2,7 +2,7 @@ import { marked } from "marked";
 import frontMatter from "front-matter";
 import handlebars from "handlebars";
 import JSON5 from "json5";
-import micromatch from "micromatch";
+import { matchesGlob } from "node:path";
 import nodemailer from "nodemailer";
 
 // ===================================================================
@@ -48,44 +48,19 @@ export function compileMailTemplate(source) {
 
 // -------------------------------------------------------------------
 
+// Matches entries against any of `patterns` (all if none), except those
+// matching a `!` pattern.
 export function createGlobMatcher(patterns) {
-  if (patterns.length === 0) {
-    return () => true;
-  }
+  const include = patterns.filter((pattern) => pattern[0] !== "!");
+  const exclude = patterns
+    .filter((pattern) => pattern[0] === "!")
+    .map((pattern) => pattern.slice(1));
+  const matches = (entry, list) =>
+    list.some((pattern) => matchesGlob(entry, pattern));
 
-  const noneMustMatch = [];
-  const anyMustMatch = [];
-
-  patterns.forEach((pattern) => {
-    if (pattern[0] === "!") {
-      noneMustMatch.push(micromatch.matcher(pattern.slice(1)));
-    } else {
-      anyMustMatch.push(micromatch.matcher(pattern));
-    }
-  });
-
-  const n = noneMustMatch.length;
-  const m = anyMustMatch.length;
-
-  return (entry) => {
-    for (let i = 0; i < n; ++i) {
-      if (noneMustMatch[i](entry)) {
-        return false;
-      }
-    }
-
-    if (m === 0) {
-      return true;
-    }
-
-    for (let i = 0; i < m; ++i) {
-      if (anyMustMatch[i](entry)) {
-        return true;
-      }
-    }
-
-    return false;
-  };
+  return (entry) =>
+    !matches(entry, exclude) &&
+    (include.length === 0 || matches(entry, include));
 }
 
 // -------------------------------------------------------------------
