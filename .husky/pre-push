@@ -1,0 +1,3 @@
+[ -z "$(git status --porcelain)" ] ||
+  echo "pre-push: uncommitted changes, the check covers the working tree, not the pushed commits" >&2
+node --run check
