@@ -121,9 +121,11 @@ export function draw(players, previous = {}, { random = Math.random } = {}) {
   const targets = ids.filter((id) => !targeted.has(id));
   const notify = new Set(sources);
 
+  // The matching rules out impossible fills before sampling them.
   const fill = () =>
-    sampleAssignment(sources, targets, lottery, canDraw, random) ||
-    searchAssignment(sources, targets, lottery, canDraw, random);
+    hasMatching(sources, targets, canDraw) &&
+    (sampleAssignment(sources, targets, lottery, canDraw, random) ||
+      searchAssignment(sources, targets, lottery, canDraw, random));
 
   // Release existing pairs one at a time until the open slots can be
   // filled, e.g. a new player N and a released A → B give A → N → B.
@@ -163,10 +165,6 @@ function sampleAssignment(sources, targets, result, canDraw, random) {
 // Depth-first search, assigning first the source with the fewest
 // candidates and pruning branches without a matching.
 function searchAssignment(sources, targets, result, canDraw, random) {
-  if (!hasMatching(sources, targets, canDraw)) {
-    return false;
-  }
-
   const remaining = new Set(sources);
   const free = new Set(targets);
   let steps = 0;
@@ -208,8 +206,7 @@ function searchAssignment(sources, targets, result, canDraw, random) {
 }
 
 // Whether each source can get a distinct target, ignoring reciprocity
-// (Kuhn's augmenting paths): rules out impossible games before the
-// exponential search.
+// (Kuhn's augmenting paths).
 function hasMatching(sources, targets, canDraw) {
   const owner = new Map();
   const augment = (source, seen) => {

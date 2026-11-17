@@ -203,6 +203,27 @@ describe("draw", () => {
     const others = Array.from({ length: 19 }, (_, i) => `O${i}`);
     const players = makePlayers([group, ...others]);
     assert.throws(() => drawLottery(players), /no valid draw exists/);
+
+    // Same with kept pairs: each release must not pay for sampling, counted
+    // as calls to `random`.
+    const singles = Array.from({ length: 10 }, (_, i) => `S${i}`);
+    const previous = {
+      ...drawLottery(makePlayers(singles), {}, { random: seededRandom(0) }),
+    };
+    const seeded = seededRandom(0);
+    let calls = 0;
+    const random = () => {
+      ++calls;
+      return seeded();
+    };
+    assert.throws(
+      () =>
+        draw(makePlayers([group.slice(0, 11), ...singles]), previous, {
+          random,
+        }),
+      /no valid draw exists/,
+    );
+    assert(calls < 1000, `random calls: ${calls}`);
   });
 
   it("completes an existing lottery without reciprocal pairs", () => {
