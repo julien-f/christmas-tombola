@@ -104,57 +104,125 @@ export async function createMailer({ transport: transportConfig, ...config }) {
 
 // -------------------------------------------------------------------
 
-export function draw(_items, lottery = { __proto__: null }) {
-  const haveTarget = new Set(Object.keys(lottery));
-  const haveBeenAssigned = new Set(Object.values(lottery));
+// Uniform sampling is tried first so that every valid draw is equally
+// likely; the bounded search handles heavily constrained games.
+const MAX_SAMPLING_TRIES = 1e4;
+const MAX_SEARCH_STEPS = 1e6;
 
-  const todo = [];
-  const candidates = [];
-  for (const item of Object.values(_items)) {
-    if (!haveTarget.has(item.id)) {
-      todo.push(item);
+// Draws a target for every player which has none in `lottery`.
+//
+// A player never draws themselves, someone sharing a group with them,
+// or the player who draws them.
+//
+// Returns the complete lottery (`lottery` is left untouched).
+export function draw(players, lottery = {}, { random = Math.random } = {}) {
+  const result = { __proto__: null, ...lottery };
+  const targeted = new Set(Object.values(lottery));
+  const sources = [];
+  const targets = [];
+  for (const id of Object.keys(players)) {
+    if (!Object.hasOwn(lottery, id)) {
+      sources.push(id);
     }
-    if (!haveBeenAssigned.has(item.id)) {
-      candidates.push(item);
+    if (!targeted.has(id)) {
+      targets.push(id);
     }
   }
 
-  shuffleArray(candidates);
+  const canDraw = (source, target) =>
+    !players[source].excluded.has(target) && result[target] !== source;
 
-  function drawItem(blacklist) {
-    const { length } = candidates;
+  if (
+    !sampleAssignment(sources, targets, result, canDraw, random) &&
+    !searchAssignment(sources, targets, result, canDraw, random)
+  ) {
+    throw new Error("no valid draw exists");
+  }
 
-    for (let i = 0; i < length; ++i) {
-      const candidate = candidates[i];
+  return result;
+}
 
-      if (!blacklist.has(candidate.id)) {
-        // Remove the selected candidate.
-        const newLength = length - 1;
-        candidates[i] = candidates[newLength];
-        candidates.length = newLength;
+function sampleAssignment(sources, targets, result, canDraw, random) {
+  const shuffled = targets.slice();
+  for (let i = 0; i < MAX_SAMPLING_TRIES; ++i) {
+    shuffleArray(shuffled, random);
+    sources.forEach((source, j) => {
+      result[source] = shuffled[j];
+    });
+    if (sources.every((source) => canDraw(source, result[source]))) {
+      return true;
+    }
+    for (const source of sources) {
+      delete result[source];
+    }
+  }
+  return false;
+}
 
-        return candidate;
+// Depth-first search, assigning first the source with the fewest
+// candidates.
+function searchAssignment(sources, targets, result, canDraw, random) {
+  if (!hasMatching(sources, targets, canDraw)) {
+    return false;
+  }
+
+  const remaining = new Set(sources);
+  const free = new Set(targets);
+  let steps = 0;
+
+  const search = () => {
+    if (remaining.size === 0) {
+      return true;
+    }
+
+    let source, candidates;
+    for (const s of remaining) {
+      const c = [...free].filter((t) => canDraw(s, t));
+      if (candidates === undefined || c.length < candidates.length) {
+        source = s;
+        candidates = c;
       }
     }
 
-    throw new Error("could not find a suitable candidate");
-  }
+    remaining.delete(source);
+    shuffleArray(candidates, random);
+    for (const target of candidates) {
+      if (++steps > MAX_SEARCH_STEPS) {
+        throw new Error("no valid draw found (search limit reached)");
+      }
+      result[source] = target;
+      free.delete(target);
+      if (search()) {
+        return true;
+      }
+      free.add(target);
+      delete result[source];
+    }
+    remaining.add(source);
+    return false;
+  };
 
-  while (todo.length) {
-    // Sort by ascending blacklist size.
-    todo.sort((a, b) => a._blacklist.size - b._blacklist.size);
+  return search();
+}
 
-    // Take the last one.
-    const item = todo.pop();
-
-    // The target cannot draw item.
-    const target = drawItem(item._blacklist);
-    target._blacklist.add(item.id);
-
-    lottery[item.id] = target.id;
-  }
-
-  return lottery;
+// Whether each source can get a distinct target, ignoring reciprocity
+// (Kuhn's augmenting paths): rules out impossible games before the
+// exponential search.
+function hasMatching(sources, targets, canDraw) {
+  const owner = new Map();
+  const augment = (source, seen) => {
+    for (const target of targets) {
+      if (canDraw(source, target) && !seen.has(target)) {
+        seen.add(target);
+        if (!owner.has(target) || augment(owner.get(target), seen)) {
+          owner.set(target, source);
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  return sources.every((source) => augment(source, new Set()));
 }
 
 // -------------------------------------------------------------------
@@ -163,92 +231,58 @@ export const noop = Function.prototype;
 
 // -------------------------------------------------------------------
 
-const _makeBlacklist = (parent = null) => ({
-  __proto__: parent,
-  _size: 0,
+// Players can be nested in groups (arrays): a player cannot draw anyone
+// in any group containing them, at any depth.
+export function parsePlayers(json) {
+  const players = { __proto__: null };
+  const playerGroups = new Map();
 
-  get size() {
-    return parent ? this._size + parent._size : this._size;
-  },
+  const visit = (entry, groups) => {
+    if (Array.isArray(entry)) {
+      const subGroups = [...groups, []];
+      entry.forEach((item) => visit(item, subGroups));
+      return;
+    }
 
-  add(id) {
-    this[id] = true;
-    ++this._size;
-  },
+    if (entry.participate === false) {
+      return;
+    }
 
-  has(id) {
-    return id in this;
-  },
-});
+    entry.displayName = entry.disambiguation
+      ? `${entry.name} (${entry.disambiguation})`
+      : entry.name;
 
-function _parsePlayer(player) {
-  if (Array.isArray(player)) {
-    return player.forEach(_parsePlayer, {
-      __proto__: this,
-      blacklist: _makeBlacklist(this.blacklist),
+    const id = String(entry.id ?? entry.displayName);
+    entry.id = id;
+    if (id in players) {
+      throw new Error("duplicate player id: " + id);
+    }
+    players[id] = entry;
+
+    if (entry.email === undefined && entry.phone === undefined) {
+      console.warn("WARNING: player %s has neither email or phone defined", id);
+    }
+
+    groups.forEach((group) => group.push(id));
+    playerGroups.set(entry, groups);
+  };
+  JSON5.parse(String(json)).forEach((entry) => visit(entry, []));
+
+  for (const [player, groups] of playerGroups) {
+    Object.defineProperty(player, "excluded", {
+      value: new Set([player.id, ...groups.flat()]),
     });
   }
 
-  if (player.participate === false) {
-    return;
-  }
-
-  Object.defineProperty(player, "_blacklist", {
-    value: _makeBlacklist(this.blacklist),
-  });
-  player.displayName = player.disambiguation
-    ? `${player.name} (${player.disambiguation})`
-    : player.name;
-
-  let { id } = player;
-  if (id === undefined) {
-    id = player.displayName;
-    player.id = id;
-  }
-
-  // Registers the player
-  const { players } = this;
-  if (id in players) {
-    throw new Error("duplicate player id: " + id);
-  }
-  players[id] = player;
-
-  if (player.email === undefined && player.phone === undefined) {
-    console.warn("WARNING: player %s has neither email or phone defined", id);
-  }
-
-  if (this.blacklist) {
-    // Update the common blacklist if any otherwise just the player one.
-    this.blacklist.add(id);
-  } else {
-    player._blacklist.add(id);
-  }
-}
-
-export const parsePlayers = (json) => {
-  const players = { __proto__: null };
-
-  JSON5.parse(String(json)).forEach(_parsePlayer, {
-    blacklist: null,
-    players,
-  });
-
   return players;
-};
+}
 
 // -------------------------------------------------------------------
 
 // Fisher-Yates shuffle.
-// http://bost.ocks.org/mike/shuffle/
-export function shuffleArray(array) {
-  let n = array.length;
-  let i, tmp;
-
-  while (n) {
-    i = Math.floor(Math.random() * n--);
-
-    tmp = array[n];
-    array[n] = array[i];
-    array[i] = tmp;
+export function shuffleArray(array, random = Math.random) {
+  for (let n = array.length; n > 1;) {
+    const i = Math.floor(random() * n--);
+    [array[n], array[i]] = [array[i], array[n]];
   }
 }
