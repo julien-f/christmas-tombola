@@ -93,6 +93,105 @@ export function createGlobMatcher(patterns) {
     (include.length === 0 || matches(entry, include));
 }
 
+// Template file suffix of each channel.
+export const CHANNEL_SUFFIXES = Object.freeze({
+  email: ".email.md",
+  sms: ".sms.txt",
+});
+
+const TEMPLATE_FILE = /^(.+)\.(?:email\.md|sms\.txt)$/;
+
+// The template file of each channel of `message` among `fileNames` (a
+// directory listing). Throws if there is none, or if another file of
+// the message is there: likely a typo.
+export function messageTemplates(fileNames, message) {
+  const expected = Object.fromEntries(
+    Object.entries(CHANNEL_SUFFIXES).map(([channel, suffix]) => [
+      channel,
+      message + suffix,
+    ]),
+  );
+  const expectedText = Object.values(expected).join(" or ");
+
+  const unknown = fileNames.filter(
+    (name) =>
+      name.startsWith(message + ".") &&
+      !Object.values(expected).includes(name) &&
+      // Another message's, e.g. `targets.v2.sms.txt` for `targets`.
+      !TEMPLATE_FILE.test(name),
+  );
+  if (unknown.length !== 0) {
+    throw new Error(
+      `unexpected ${unknown.join(", ")}: name it ${expectedText}`,
+    );
+  }
+
+  const templates = Object.fromEntries(
+    Object.entries(expected).filter(([, name]) => fileNames.includes(name)),
+  );
+  if (Object.keys(templates).length === 0) {
+    const messages = [
+      ...new Set(fileNames.map((name) => TEMPLATE_FILE.exec(name)?.[1])),
+    ]
+      .filter(Boolean)
+      .sort();
+    throw new Error(
+      `no ${expectedText}; messages here: ${messages.join(", ") || "none"}`,
+    );
+  }
+  return templates;
+}
+
+// Whether `render(target)` (a message for a player) depends on the
+// target: differs without it, or fails without it (strict mode).
+export function dependsOnTarget(render, target) {
+  if (target === undefined) {
+    return false;
+  }
+  let without;
+  try {
+    without = render(undefined);
+  } catch {
+    return true;
+  }
+  // Mail renders to an object: fields, text and HTML.
+  return JSON.stringify(render(target)) !== JSON.stringify(without);
+}
+
+const CONTACT_NAMES = { email: "email", sms: "phone" };
+
+// Why `delivery` (`{ playerId, channel, contact, target }`, `target` an
+// id set only if the message depends on it) is to send, given `sent`,
+// the records of this message (see `recordDelivery`); undefined if
+// already sent, unless `resend`.
+export function deliveryReason(
+  sent,
+  { playerId, channel, contact, target },
+  { resend = false } = {},
+) {
+  const record = sent[playerId]?.[channel];
+  if (record === undefined) {
+    return "new";
+  }
+  if (record.contact !== contact) {
+    return `new ${CONTACT_NAMES[channel]}`;
+  }
+  if (target !== undefined && record.target !== target) {
+    return "new target";
+  }
+  return resend ? "resend" : undefined;
+}
+
+// Returns `sent` (by player id, then channel) with `delivery` recorded.
+export const recordDelivery = (
+  sent,
+  { playerId, channel, contact, target },
+  date,
+) => ({
+  ...sent,
+  [playerId]: { ...sent[playerId], [channel]: { contact, target, date } },
+});
+
 // Patterns (with their `!`) matching none of `entries`: likely typos.
 export const unmatchedPatterns = (patterns, entries) =>
   patterns.filter((pattern) => {

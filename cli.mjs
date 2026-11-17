@@ -2,20 +2,25 @@
 
 import { join } from "node:path";
 import { load as loadConfig } from "app-conf";
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, writeFile } from "node:fs/promises";
 import pkg from "./package.json" with { type: "json" };
 import { parseArgs } from "node:util";
 
 import {
+  CHANNEL_SUFFIXES,
   compileMailTemplate,
   compileTextTemplate,
   createGlobMatcher,
   createMailer,
+  deliveryReason,
+  dependsOnTarget,
   draw,
   excludePairs,
   hideTarget,
+  messageTemplates,
   namePattern,
   parsePlayers,
+  recordDelivery,
   shellQuote,
   unmatchedPatterns,
   unreachablePlayers,
@@ -96,6 +101,24 @@ const parseFile = (path, parse) => (content) => {
   }
 };
 
+// Undefined if the file does not exist.
+const readOptionalJson = (path) =>
+  readFile(path).then(parseFile(path, JSON.parse), (error) => {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  });
+
+// Through a temporary file in the same directory (a rename across file
+// systems fails): an interruption cannot leave it truncated.
+const writeJson = async (path, value) => {
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, JSON.stringify(value, null, 2));
+  await rename(tmp, path);
+};
+
+const sentPath = (gameDir) => join(gameDir, "sent.json");
+
 // Returns the players and the lottery (undefined if not drawn yet).
 const readGame = async (gameDir) => {
   const playersPath = join(gameDir, "players.json5");
@@ -103,14 +126,7 @@ const readGame = async (gameDir) => {
     players: await readFile(playersPath).then(
       parseFile(playersPath, parsePlayers),
     ),
-    lottery: await readFile(lotteryPath(gameDir)).then(
-      parseFile(lotteryPath(gameDir), JSON.parse),
-      (error) => {
-        if (error.code !== "ENOENT") {
-          throw error;
-        }
-      },
-    ),
+    lottery: await readOptionalJson(lotteryPath(gameDir)),
   };
 };
 
@@ -196,6 +212,12 @@ const COMMANDS = Object.freeze({
       Object.keys(lottery).length,
       lotteryPath(gameDir),
     );
+    if (notify.length !== 0) {
+      console.log(
+        "next: %s",
+        [pkg.name, "send", gameDir, "targets"].map(shellQuote).join(" "),
+      );
+    }
   },
 
   async dump(args) {
@@ -220,56 +242,8 @@ const COMMANDS = Object.freeze({
     );
   },
 
-  async email(args) {
-    await sendToPlayers(args, {
-      command: "email",
-      contact: "email",
-      compile: compileMailTemplate,
-      format: ({ subject, text }) => `Subject: ${subject}\n\n${text}`,
-      createSender: async () => {
-        const sendMail = await createMailer(
-          requireConfig(this.config, "email"),
-        ).catch((error) => {
-          // eslint-disable-next-line no-throw-literal
-          throw `SMTP server (\`email.transport\` in the configuration): ${error.message}`;
-        });
-        // Not from the template: a comma in a name would split it.
-        return (player, message) =>
-          sendMail(
-            { name: player.displayName, address: player.email },
-            message,
-          );
-      },
-    });
-  },
-
-  async sms(args) {
-    await sendToPlayers(args, {
-      command: "sms",
-      contact: "phone",
-      compile: compileTextTemplate,
-      format: (message) => {
-        const { count, nonGsm } = smsSegments(message);
-        return `${message}\n(~${count} SMS${
-          nonGsm === undefined ? "" : `, shorter because of "${nonGsm}"`
-        })`;
-      },
-      createSender: (messages) => {
-        const config = requireConfig(this.config, "sms");
-        const total = messages.reduce(
-          (sum, message) => sum + smsSegments(message).count,
-          0,
-        );
-        if (total > SMS_LIMIT) {
-          console.warn(
-            "%d SMS: past %d in 30 minutes, Android asks on the phone to allow more",
-            total,
-            SMS_LIMIT,
-          );
-        }
-        return (player, message) => sendSms(config, player.phone, message);
-      },
-    });
+  send(args) {
+    return send(this.config, args);
   },
 
   async "sms-test"(args) {
@@ -290,34 +264,154 @@ const COMMANDS = Object.freeze({
   },
 });
 
-// Renders the template for every selected player, then, if all succeed
-// and `--force`, sends them one at a time; otherwise prints them, with
-// targets hidden unless `--show`.
-async function sendToPlayers(
-  args,
-  { command, contact, compile, format, createSender },
-) {
+// How each channel reaches a player.
+const CHANNELS = {
+  email: {
+    label: "email",
+    contact: "email",
+    compile: compileMailTemplate,
+    format: ({ subject, text }) => `Subject: ${subject}\n\n${text}`,
+    // Returns `send(player, content)`, created before sending any to
+    // check the configuration.
+    async createSender(config) {
+      const sendMail = await createMailer(requireConfig(config, "email")).catch(
+        (error) => {
+          // eslint-disable-next-line no-throw-literal
+          throw `SMTP server (\`email.transport\` in the configuration): ${error.message}`;
+        },
+      );
+      // Not from the template: a comma in a name would split it.
+      return (player, content) =>
+        sendMail({ name: player.displayName, address: player.email }, content);
+    },
+  },
+  sms: {
+    label: "SMS",
+    contact: "phone",
+    compile: compileTextTemplate,
+    format: (content) => {
+      const { count, nonGsm } = smsSegments(content);
+      return `${content}\n(~${count} SMS${
+        nonGsm === undefined ? "" : `, shorter because of "${nonGsm}"`
+      })`;
+    },
+    createSender(config, contents) {
+      const smsConfig = requireConfig(config, "sms");
+      const total = contents.reduce(
+        (sum, content) => sum + smsSegments(content).count,
+        0,
+      );
+      if (total > SMS_LIMIT) {
+        console.warn(
+          "%d SMS: past %d in 30 minutes, Android asks on the phone to allow more",
+          total,
+          SMS_LIMIT,
+        );
+      }
+      return (player, content) => sendSms(smsConfig, player.phone, content);
+    },
+  },
+};
+
+// Why no channel reaches `player`, and how to fix it.
+function unreachableReason(player, message) {
+  const contacts = Object.keys(CHANNELS).filter(
+    (channel) => player[CHANNELS[channel].contact] !== undefined,
+  );
+  if (contacts.length === 0) {
+    return "neither email nor phone (set `inPerson: true` to tell them in person)";
+  }
+  return `no ${contacts
+    .map((channel) => message + CHANNEL_SUFFIXES[channel])
+    .join(" or ")} for their ${contacts
+    .map((channel) => CHANNELS[channel].contact)
+    .join(" and ")} (add it, or skip with ${shellQuote(
+    "!" + namePattern(player.displayName),
+  )})`;
+}
+
+// Renders the message for every selected player on each of their
+// channels, then, if all succeed and `--force`, sends them one at a
+// time; otherwise prints them, with targets hidden unless `--show`.
+async function send(config, args) {
   const {
     values: { force, show },
     positionals: [
       gameDir = requireArg("<game directory>"),
-      templateFile = requireArg("<template>"),
+      message = requireArg("<message>"),
       ...patterns
     ],
   } = parseCommandArgs(args);
 
-  const [{ players, lottery }, template] = await Promise.all([
+  const fileNames = await readdir(gameDir);
+  let files;
+  try {
+    files = messageTemplates(fileNames, message);
+  } catch (error) {
+    // The user's to fix, not a bug: no stack trace.
+    throw error.message;
+  }
+  const channels = Object.keys(files);
+  console.log(
+    "%s: %s",
+    message,
+    channels.length === Object.keys(CHANNELS).length
+      ? channels.map((channel) => CHANNELS[channel].label).join(" and ")
+      : `${CHANNELS[channels[0]].label} only (no ${Object.keys(CHANNELS)
+          .filter((channel) => !channels.includes(channel))
+          .map((channel) => message + CHANNEL_SUFFIXES[channel])
+          .join(", ")})`,
+  );
+
+  const [{ players, lottery }, sent, templates] = await Promise.all([
     readGame(gameDir),
-    readFile(templateFile, "utf8").then(parseFile(templateFile, compile)),
+    readOptionalJson(sentPath(gameDir)).then((sent = {}) => sent),
+    Promise.all(
+      channels.map(async (channel) => {
+        const path = join(gameDir, files[channel]);
+        const template = await readFile(path, "utf8").then(
+          parseFile(path, CHANNELS[channel].compile),
+        );
+        return [channel, template];
+      }),
+    ).then(Object.fromEntries),
   ]);
 
   const isSelected = createPlayerMatcher(players, patterns, { force });
+  // Include patterns name players to send to even if already sent; `!`
+  // patterns only filter.
+  const includes = patterns
+    .filter((pattern) => pattern[0] !== "!")
+    .map((pattern) => pattern.toLowerCase());
+  const matchesInclude = createGlobMatcher(includes);
+  const isResent = (player) =>
+    includes.length !== 0 && matchesInclude(player.displayName.toLowerCase());
+
   const sortedPlayers = sortByDisplayName(players);
   const hiddenTarget = hideTarget(players);
-  const messages = [];
-  const failures = [];
+  const messageSent = sent[message] ?? {};
+  const deliveries = [];
   const inPerson = [];
+  const failures = new Set();
   let selected = 0;
+  let alreadySent = 0;
+  let lastSent = "";
+
+  // Adds `delivery` to `list` if pending, else counts it as already sent.
+  const addIfPending = (list, delivery) => {
+    const reason = deliveryReason(messageSent, delivery, {
+      resend: isResent(delivery.player),
+    });
+    if (reason === undefined) {
+      ++alreadySent;
+      const { date } = messageSent[delivery.playerId][delivery.channel];
+      if (date > lastSent) {
+        lastSent = date;
+      }
+    } else {
+      list.push({ ...delivery, reason });
+    }
+  };
 
   for (const player of sortedPlayers) {
     const name = player.displayName;
@@ -326,46 +420,71 @@ async function sendToPlayers(
     }
     ++selected;
 
-    if (player[contact] === undefined) {
-      if (player.inPerson) {
-        inPerson.push(player);
-      } else {
-        console.warn("%s: no %s, skipped", name, contact);
-      }
-      continue;
-    }
-
-    // Without a lottery, templates are announcements without targets.
+    // Without a lottery, messages are announcements without targets.
     let target;
     if (lottery !== undefined) {
       target = players[lottery[player.id]];
       if (target === undefined) {
         console.error("%s: no valid target in lottery.json, run draw", name);
-        failures.push(name);
+        failures.add(name);
         continue;
       }
     }
+    const renderer = (channel) => (target) =>
+      templates[channel]({ player, players: sortedPlayers, target });
+    const delivery = (channel, dependent) => ({
+      player,
+      playerId: player.id,
+      channel,
+      contact: player[CHANNELS[channel]?.contact],
+      target: dependent ? target.id : undefined,
+    });
 
-    const render = (target) =>
-      template({ player, players: sortedPlayers, target });
-    try {
-      // Rendered with the real target even if hidden: it can fail where
-      // the hidden one would not.
-      let message = render(target);
-      if (target !== undefined && !force && !show) {
-        message = render(hiddenTarget);
+    const reachable = channels.filter(
+      (channel) => player[CHANNELS[channel].contact] !== undefined,
+    );
+    if (reachable.length === 0) {
+      if (player.inPerson) {
+        // Any template tells whether the message is about the target.
+        const dependent = (() => {
+          try {
+            return dependsOnTarget(renderer(channels[0]), target);
+          } catch {
+            return true;
+          }
+        })();
+        addIfPending(inPerson, delivery("inPerson", dependent));
+      } else {
+        console.error("%s: %s", name, unreachableReason(player, message));
+        failures.add(name);
       }
-      messages.push({ player, message });
-    } catch (error) {
-      // The details could tell which fields the target has.
-      console.error(
-        "%s: %s",
-        name,
-        show
-          ? `${templateFile}: ${error.message}`
-          : "template error, use --show for details",
-      );
-      failures.push(name);
+      continue;
+    }
+
+    for (const channel of reachable) {
+      const render = renderer(channel);
+      try {
+        // Rendered with the real target even if hidden: it can fail where
+        // the hidden one would not.
+        let content = render(target);
+        const dependent = dependsOnTarget(render, target);
+        if (target !== undefined && !force && !show) {
+          content = render(hiddenTarget);
+        }
+        addIfPending(deliveries, { ...delivery(channel, dependent), content });
+      } catch (error) {
+        // The details could tell which fields the target has.
+        console.error(
+          "%s: %s",
+          name,
+          show || target === undefined
+            ? `${files[channel]}: ${error.message}${
+                lottery === undefined ? " (before the draw, no target)" : ""
+              }`
+            : "template error, use --show for details",
+        );
+        failures.add(name);
+      }
     }
   }
 
@@ -374,57 +493,105 @@ async function sendToPlayers(
     throw "no player selected";
   }
 
-  if (force && failures.length !== 0) {
+  if (force && failures.size !== 0) {
     // eslint-disable-next-line no-throw-literal
     throw "nothing sent, fix the errors above";
   }
 
+  // Recorded after each sending, so that a failure or an interruption
+  // keeps the others.
+  let records = sent;
+  const record = async (delivery) => {
+    records = {
+      ...records,
+      [message]: recordDelivery(
+        records[message] ?? {},
+        delivery,
+        new Date().toISOString().slice(0, 10),
+      ),
+    };
+    try {
+      await writeJson(sentPath(gameDir), records);
+    } catch (error) {
+      // eslint-disable-next-line no-throw-literal
+      throw `${delivery.player.displayName}: sent but not recorded in sent.json (${error.message}): stopped, else the next run sends it again`;
+    }
+  };
+
   if (force) {
-    // `send(player, message)`, created before sending any to check the
-    // configuration.
-    const send = await createSender(messages.map(({ message }) => message));
-    for (const { player, message } of messages) {
-      const name = player.displayName;
-      try {
-        await send(player, message);
-        console.log("%s: sent to %s", name, player[contact]);
-      } catch (error) {
-        console.error("%s: failed: %s", name, error.message);
-        failures.push(name);
+    const senders = {};
+    for (const channel of channels) {
+      const contents = deliveries
+        .filter((delivery) => delivery.channel === channel)
+        .map((delivery) => delivery.content);
+      if (contents.length !== 0) {
+        senders[channel] = await CHANNELS[channel].createSender(
+          config,
+          contents,
+        );
       }
     }
+    for (const delivery of deliveries) {
+      const name = delivery.player.displayName;
+      try {
+        await senders[delivery.channel](delivery.player, delivery.content);
+      } catch (error) {
+        console.error("%s: failed: %s", name, error.message);
+        failures.add(name);
+        continue;
+      }
+      console.log("%s: sent to %s", name, delivery.contact);
+      await record(delivery);
+    }
   } else {
-    for (const { player, message } of messages) {
+    for (const { player, channel, contact, content, reason } of deliveries) {
       console.log(
-        "--- to %s (%s)\n%s\n",
+        "--- %s to %s (%s) [%s]\n%s\n",
+        CHANNELS[channel].label,
         player.displayName,
-        player[contact],
-        format(message),
+        contact,
+        reason,
+        CHANNELS[channel].format(content),
       );
     }
   }
 
   if (inPerson.length !== 0) {
     // When sending, the organizer is telling everyone: no need to hide.
-    const target = (player) =>
-      (force || show) && players[lottery?.[player.id]]?.displayName;
     console.log(
       "to tell in person: %s",
       inPerson
-        .map((player) =>
-          [player.displayName, target(player)].filter(Boolean).join(" → "),
+        .map(({ player, target }) =>
+          force || show
+            ? [player.displayName, players[target]?.displayName]
+                .filter(Boolean)
+                .join(" → ")
+            : player.displayName,
         )
         .join(", "),
     );
+    if (force) {
+      for (const delivery of inPerson) {
+        await record(delivery);
+      }
+    }
   }
 
-  if (failures.length !== 0) {
-    console.error("failed for: %s", failures.join(", "));
+  if (alreadySent !== 0) {
+    console.log("%d already sent, last on %s", alreadySent, lastSent);
+  }
+  if (deliveries.length === 0 && inPerson.length === 0 && failures.size === 0) {
+    console.log("nothing to send (to resend: add '*' or names)");
+    return;
+  }
+
+  if (failures.size !== 0) {
+    console.error("failed for: %s", [...failures].join(", "));
     if (force) {
       console.error(
         "to retry them: %s",
-        [pkg.name, command, gameDir, templateFile, "--force"]
-          .concat(failures.map(namePattern))
+        [pkg.name, "send", gameDir, message, "--force"]
+          .concat([...failures].map(namePattern))
           .map(shellQuote)
           .join(" "),
       );
@@ -443,14 +610,14 @@ Usage: ${pkg.name} <command> [options] <arguments>
 Commands:
   draw <game directory> [--avoid <previous game directory>...]
   dump <game directory> [<pattern>...]
-  email <game directory> <mail template> [<pattern>...]
-  sms <game directory> <sms template> [<pattern>...]
+  send <game directory> <message> [<pattern>...]
+      <message>.email.md and <message>.sms.txt in the game directory
   sms-test <phone> [<message>]
 
 Options:
   --avoid      draw: no pair of that game (e.g. last year's)
   --show       show targets (hidden by default)
-  -f, --force  email, sms: really send (only printed by default)
+  -f, --force  send: really send (only printed by default)
   -h, --help   show this help
 
 ${pkg.name} v${pkg.version}

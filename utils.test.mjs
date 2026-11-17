@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
   compileMailTemplate,
   compileTextTemplate,
   createGlobMatcher,
+  deliveryReason,
+  dependsOnTarget,
   draw,
   excludePairs,
   hideTarget,
+  messageTemplates,
   parsePlayers,
   namePattern,
+  recordDelivery,
   shellQuote,
   unmatchedPatterns,
   unreachablePlayers,
@@ -463,6 +467,143 @@ describe("createGlobMatcher", () => {
   });
 });
 
+describe("messageTemplates", () => {
+  const files = [
+    "players.json5",
+    "announce.email.md",
+    "targets.email.md",
+    "targets.sms.txt",
+    "targets.v2.sms.txt",
+  ];
+
+  it("finds the templates of each channel", () => {
+    assert.deepEqual(messageTemplates(files, "targets"), {
+      email: "targets.email.md",
+      sms: "targets.sms.txt",
+    });
+    assert.deepEqual(messageTemplates(files, "announce"), {
+      email: "announce.email.md",
+    });
+  });
+
+  it("rejects other files of the message, likely typos", () => {
+    assert.throws(
+      () => messageTemplates([...files, "targets.sms.text"], "targets"),
+      /targets\.sms\.text.*targets\.email\.md or targets\.sms\.txt/,
+    );
+  });
+
+  it("lists the messages when none matches", () => {
+    assert.throws(
+      () => messageTemplates(files, "target"),
+      /no target\.email\.md or target\.sms\.txt; messages here: announce, targets, targets\.v2/,
+    );
+  });
+});
+
+describe("dependsOnTarget", () => {
+  const target = { displayName: "Bob" };
+  const depends = (source, compile = compileTextTemplate) =>
+    dependsOnTarget((target) => compile(source)({ target }), target);
+
+  it("is true when the rendering uses the target", () => {
+    assert(depends("for {{target.displayName}}"));
+    assert(depends("{{#if target}}drawn{{/if}}"));
+    assert(
+      depends(
+        "+++\nsubject = '{{target.displayName}}'\n+++\nhi",
+        compileMailTemplate,
+      ),
+    );
+  });
+
+  it("is false otherwise, or without a target", () => {
+    assert(!depends("on December 25"));
+    assert(!depends("+++\nsubject = 'hi'\n+++\nhi", compileMailTemplate));
+    assert(!dependsOnTarget(() => "hi", undefined));
+  });
+});
+
+describe("deliveryReason", () => {
+  const sent = {
+    alice: {
+      email: { contact: "a@x", target: "bob", date: "2026-12-01" },
+      sms: { contact: "+1", date: "2026-12-01" },
+    },
+  };
+  const reason = (delivery, options) =>
+    deliveryReason(sent, { playerId: "alice", ...delivery }, options);
+
+  it("is undefined when already sent", () => {
+    assert.equal(
+      reason({ channel: "email", contact: "a@x", target: "bob" }),
+      undefined,
+    );
+    assert.equal(reason({ channel: "sms", contact: "+1" }), undefined);
+    // A record's target is ignored when the message no longer depends on it.
+    assert.equal(reason({ channel: "email", contact: "a@x" }), undefined);
+  });
+
+  it("tells why it is pending", () => {
+    assert.equal(
+      reason({ channel: "email", contact: "a@x", target: "carol" }),
+      "new target",
+    );
+    // Sent without target, before the draw.
+    assert.equal(
+      reason({ channel: "sms", contact: "+1", target: "bob" }),
+      "new target",
+    );
+    assert.equal(
+      reason({ channel: "email", contact: "b@x", target: "bob" }),
+      "new email",
+    );
+    assert.equal(reason({ channel: "sms", contact: "+2" }), "new phone");
+    assert.equal(reason({ channel: "inPerson" }), "new");
+    assert.equal(
+      deliveryReason(sent, {
+        playerId: "dan",
+        channel: "email",
+        contact: "d@x",
+      }),
+      "new",
+    );
+  });
+
+  it("resends when asked", () => {
+    assert.equal(
+      reason({ channel: "sms", contact: "+1" }, { resend: true }),
+      "resend",
+    );
+    assert.equal(
+      reason({ channel: "sms", contact: "+2" }, { resend: true }),
+      "new phone",
+    );
+  });
+});
+
+describe("recordDelivery", () => {
+  it("records a delivery without changing the others", () => {
+    const sent = { alice: { email: { contact: "a@x", date: "2026-11-01" } } };
+    assert.deepEqual(
+      recordDelivery(
+        sent,
+        { playerId: "alice", channel: "sms", contact: "+1", target: "bob" },
+        "2026-12-01",
+      ),
+      {
+        alice: {
+          email: { contact: "a@x", date: "2026-11-01" },
+          sms: { contact: "+1", target: "bob", date: "2026-12-01" },
+        },
+      },
+    );
+    assert.deepEqual(sent, {
+      alice: { email: { contact: "a@x", date: "2026-11-01" } },
+    });
+  });
+});
+
 describe("unmatchedPatterns", () => {
   it("lists include and `!` patterns matching no name", () => {
     assert.deepEqual(
@@ -580,6 +721,16 @@ describe("examples", () => {
   const players = parsePlayers(read("players.json5"));
   const all = Object.values(players);
 
+  it("has email and SMS templates for each message", () => {
+    const files = readdirSync(new URL("examples/", import.meta.url));
+    for (const message of ["announce", "targets"]) {
+      assert.deepEqual(Object.keys(messageTemplates(files, message)), [
+        "email",
+        "sms",
+      ]);
+    }
+  });
+
   it("can be drawn", () => {
     assert.deepEqual(unreachablePlayers(players), []);
     assertValid(players, drawLottery(players, {}, { random: seededRandom(0) }));
@@ -587,8 +738,8 @@ describe("examples", () => {
 
   it("renders the templates for every player", () => {
     const lottery = drawLottery(players, {}, { random: seededRandom(0) });
-    const email = compileMailTemplate(read("email.md"));
-    const sms = compileTextTemplate(read("sms.txt"));
+    const email = compileMailTemplate(read("targets.email.md"));
+    const sms = compileTextTemplate(read("targets.sms.txt"));
     for (const player of all) {
       const context = {
         player,
@@ -602,7 +753,7 @@ describe("examples", () => {
   });
 
   it("announces the game before the draw", () => {
-    const announce = compileMailTemplate(read("announce.md"));
+    const announce = compileMailTemplate(read("announce.email.md"));
     const { text } = announce({
       player: all[0],
       players: all,
@@ -610,7 +761,7 @@ describe("examples", () => {
     });
     assert.match(text, /- Grace\n/);
 
-    const sms = compileTextTemplate(read("announce.txt"));
+    const sms = compileTextTemplate(read("announce.sms.txt"));
     assert.match(
       sms({ player: all[0], players: all, target: undefined }),
       /^Hi /,
