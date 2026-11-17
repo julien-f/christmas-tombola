@@ -93,6 +93,13 @@ export function createGlobMatcher(patterns) {
     (include.length === 0 || matches(entry, include));
 }
 
+// Patterns (with their `!`) matching none of `entries`: likely typos.
+export const unmatchedPatterns = (patterns, entries) =>
+  patterns.filter((pattern) => {
+    const glob = pattern[0] === "!" ? pattern.slice(1) : pattern;
+    return !entries.some((entry) => matchesGlob(entry, glob));
+  });
+
 // A pattern selecting `name`. Other characters become `?`: escaping glob
 // syntax (`!`, braces…) does not work reliably.
 export const namePattern = (name) => name.replace(/[^\p{L}\p{N} .'_-]/gu, "?");
@@ -205,7 +212,9 @@ export function draw(players, previous = {}, { random = Math.random } = {}) {
     do {
       const source = kept.pop();
       if (source === undefined) {
-        throw new Error("no valid draw exists");
+        throw new Error(
+          "no valid draw exists: too few players (nobody draws themselves, their groups or their giver)",
+        );
       }
       release(source);
     } while (!fill());
@@ -258,7 +267,9 @@ function searchAssignment(sources, targets, result, canDraw, random) {
     shuffleArray(candidates, random);
     for (const target of candidates) {
       if (++steps > MAX_SEARCH_STEPS) {
-        throw new Error("no valid draw found (search limit reached)");
+        throw new Error(
+          "no valid draw found: too constrained, retry or loosen the groups",
+        );
       }
       result[source] = target;
       free.delete(target);
@@ -337,6 +348,19 @@ export function parsePlayers(json) {
   }
 
   return players;
+}
+
+// Forbids the pairs of `lottery` (e.g. last year's) between current
+// players; returns how many.
+export function excludePairs(players, lottery) {
+  let count = 0;
+  for (const [source, target] of Object.entries(lottery)) {
+    if (source in players && target in players) {
+      players[source].excluded.add(target);
+      ++count;
+    }
+  }
+  return count;
 }
 
 // Players who would never learn their target.

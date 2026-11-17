@@ -12,10 +12,12 @@ import {
   createGlobMatcher,
   createMailer,
   draw,
+  excludePairs,
   hideTarget,
   namePattern,
   parsePlayers,
   shellQuote,
+  unmatchedPatterns,
   unreachablePlayers,
 } from "./utils.mjs";
 import { sendSms, smsSegments } from "./_sendSms.mjs";
@@ -44,6 +46,7 @@ function parseCommandArgs(args) {
       args,
       allowPositionals: true,
       options: {
+        avoid: { type: "string", multiple: true, default: [] },
         force: { type: "boolean", short: "f", default: false },
         show: { type: "boolean", default: false },
       },
@@ -59,9 +62,24 @@ const sortByDisplayName = (players) =>
     a.displayName.localeCompare(b.displayName),
   );
 
-// Case-insensitive, on displayed names.
-const createPlayerMatcher = (patterns) => {
-  const matches = createGlobMatcher(patterns.map((_) => _.toLowerCase()));
+// Case-insensitive, on displayed names. A pattern matching no player is
+// a likely typo: someone left out, or not excluded.
+const createPlayerMatcher = (players, patterns, { force = false } = {}) => {
+  const lowerPatterns = patterns.map((_) => _.toLowerCase());
+  const unmatched = unmatchedPatterns(
+    lowerPatterns,
+    Object.values(players).map((player) => player.displayName.toLowerCase()),
+  );
+  if (unmatched.length !== 0) {
+    const message = `no player matches: ${unmatched.join(", ")} (patterns match displayed names, see dump)`;
+    if (force) {
+      // eslint-disable-next-line no-throw-literal
+      throw `${message}, nothing sent`;
+    }
+    console.warn(message);
+  }
+
+  const matches = createGlobMatcher(lowerPatterns);
   return (player) => matches(player.displayName.toLowerCase());
 };
 
@@ -101,7 +119,7 @@ const readGame = async (gameDir) => {
 const COMMANDS = Object.freeze({
   async draw(args) {
     const {
-      values: { show },
+      values: { avoid, show },
       positionals: [gameDir = requireArg("<game directory>")],
     } = parseCommandArgs(args);
 
@@ -115,7 +133,28 @@ const COMMANDS = Object.freeze({
         .join(", ")} (set \`inPerson: true\` to tell them in person)`;
     }
 
-    const { lottery, dropped, notify } = draw(players, previous);
+    for (const avoidDir of avoid) {
+      const path = lotteryPath(avoidDir);
+      const count = excludePairs(
+        players,
+        await readFile(path).then(parseFile(path, JSON.parse)),
+      );
+      console.log("avoiding %d pair(s) from %s", count, path);
+    }
+
+    let result;
+    try {
+      result = draw(players, previous);
+    } catch (error) {
+      if (!error.message.startsWith("no valid draw")) {
+        throw error;
+      }
+      // The players' to fix, not a bug: no stack trace.
+      throw avoid.length === 0
+        ? error.message
+        : `${error.message}; try without --avoid`;
+    }
+    const { lottery, dropped, notify } = result;
 
     if (dropped.length !== 0) {
       console.warn(
@@ -123,6 +162,16 @@ const COMMANDS = Object.freeze({
         dropped.length,
         show ? ": " + dropped.map((pair) => pair.join(" → ")).join(", ") : "",
       );
+      const gone = [
+        ...new Set(dropped.flat().filter((id) => !(id in players))),
+      ];
+      if (gone.length !== 0) {
+        console.warn(
+          "left the game or renamed: %s (to rename without redrawing, keep the old id: `id: %s`)",
+          gone.join(", "),
+          JSON.stringify(gone[0]),
+        );
+      }
     }
     if (previous !== undefined) {
       console.log(
@@ -165,7 +214,7 @@ const COMMANDS = Object.freeze({
       }
     }
 
-    const isSelected = createPlayerMatcher(patterns);
+    const isSelected = createPlayerMatcher(players, patterns);
     return Object.fromEntries(
       Object.entries(players).filter(([, player]) => isSelected(player)),
     );
@@ -180,7 +229,10 @@ const COMMANDS = Object.freeze({
       createSender: async () => {
         const sendMail = await createMailer(
           requireConfig(this.config, "email"),
-        );
+        ).catch((error) => {
+          // eslint-disable-next-line no-throw-literal
+          throw `SMTP server (\`email.transport\` in the configuration): ${error.message}`;
+        });
         // Not from the template: a comma in a name would split it.
         return (player, message) =>
           sendMail(
@@ -259,7 +311,7 @@ async function sendToPlayers(
     readFile(templateFile, "utf8").then(parseFile(templateFile, compile)),
   ]);
 
-  const isSelected = createPlayerMatcher(patterns);
+  const isSelected = createPlayerMatcher(players, patterns, { force });
   const sortedPlayers = sortByDisplayName(players);
   const hiddenTarget = hideTarget(players);
   const messages = [];
@@ -389,13 +441,14 @@ const help = `
 Usage: ${pkg.name} <command> [options] <arguments>
 
 Commands:
-  draw <game directory>
+  draw <game directory> [--avoid <previous game directory>...]
   dump <game directory> [<pattern>...]
   email <game directory> <mail template> [<pattern>...]
   sms <game directory> <sms template> [<pattern>...]
   sms-test <phone> [<message>]
 
 Options:
+  --avoid      draw: no pair of that game (e.g. last year's)
   --show       show targets (hidden by default)
   -f, --force  email, sms: really send (only printed by default)
   -h, --help   show this help

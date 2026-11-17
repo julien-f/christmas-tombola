@@ -15,6 +15,8 @@ npm link # optional: puts `christmas-tombola` on the PATH, otherwise use ./cli.m
 
 Only needed to send: copy [`example-config.json5`](example-config.json5) to `~/.config/christmas-tombola/config.json5` and fill in the SMTP server and the SMS gateway.
 
+An SMTP server often accepts a wrong address and bounces the email later: watch the `from` mailbox after sending.
+
 SMS messages are sent through an Android phone running [SMS Gate](https://sms-gate.app) in Local Server mode, on the same network:
 
 - Disable battery optimization for the app (Samsung: _Unrestricted_), else the server stops when the screen is off.
@@ -23,12 +25,17 @@ SMS messages are sent through an Android phone running [SMS Gate](https://sms-ga
 
 ## First game
 
-1. `cp -r examples games/2026` (`games/` is git-ignored), then edit `games/2026/players.json5`.
-2. Optionally, announce the game: `christmas-tombola email games/2026 games/2026/announce.md`.
+1. `cp -r examples games/2026` (`games/` is git-ignored: back it up), then edit `games/2026/players.json5`.
+2. Optionally, announce the game: `christmas-tombola email games/2026 games/2026/announce.md`, and the same with `sms` and `announce.txt`.
 3. `christmas-tombola draw games/2026`.
 4. Check the messages with a dry run: `christmas-tombola email games/2026 games/2026/email.md`, and the same with `sms` and `sms.txt`.
 5. Send them: the same commands with `--force`; they end with the in-person players to tell and their targets.
 6. After editing the players, `draw` again and send to the players it lists: `christmas-tombola email games/2026 games/2026/email.md 'alice' 'grace' --force`.
+
+## Next year
+
+1. A new directory with the players and templates, without `lottery.json`: `draw` would keep last year's pairs.
+2. `christmas-tombola draw games/2027 --avoid games/2026`: nobody gets last year's target. Pass `--avoid` on every `draw` of that game; in a small game, it leaves few draws (3 players: only the reverse of last year).
 
 ## Players
 
@@ -46,7 +53,7 @@ SMS messages are sent through an Android phone running [SMS Gate](https://sms-ga
 ## Commands
 
 ```sh
-christmas-tombola draw <game directory>
+christmas-tombola draw <game directory> [--avoid <previous game directory>...]
 christmas-tombola dump <game directory> [<pattern>...]
 christmas-tombola email <game directory> <template> [<pattern>...]
 christmas-tombola sms <game directory> <template> [<pattern>...]
@@ -54,7 +61,7 @@ christmas-tombola sms-test <phone> [<message>]
 ```
 
 - `<template>` is a path from the current directory, e.g. `games/2026/email.md`.
-- Patterns (case-insensitive globs on displayed names) select players, `!` excludes: `'a*' '!alice'`.
+- Patterns (case-insensitive globs on displayed names) select players, `!` excludes: `'a*' '!alice'`. A pattern matching no player is likely a typo: a warning, and nothing sent with `--force`.
 - Targets stay hidden, so the organizer can play too; `--show` reveals them (`draw`, `dump`, dry runs).
 - Rerunning `draw` keeps existing pairs: it redraws only pairs that involve a removed player or break a new group, inserts new players, and lists the players whose target changed.
 - `dump` prints the players as read from `players.json5`, with their targets under `--show`: `dump games/2026 heidi --show` shows only Heidi's.

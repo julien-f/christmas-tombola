@@ -30,9 +30,9 @@
     "test": "node --test"
   },
   "lint-staged": {
-    "!(*.js|*.cjs|*.mjs)": "prettier --write --ignore-unknown",
+    "!(*.js|*.cjs|*.mjs)": "prettier --write --ignore-unknown --cache --cache-strategy content",
     "*.{,c,m}js": [
-      "prettier --write",
+      "prettier --write --cache --cache-strategy content",
       "eslint --no-warn-ignored"
     ]
   },

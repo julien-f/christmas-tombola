@@ -7,10 +7,12 @@ import {
   compileTextTemplate,
   createGlobMatcher,
   draw,
+  excludePairs,
   hideTarget,
   parsePlayers,
   namePattern,
   shellQuote,
+  unmatchedPatterns,
   unreachablePlayers,
 } from "./utils.mjs";
 
@@ -312,6 +314,21 @@ describe("draw", () => {
   });
 });
 
+describe("excludePairs", () => {
+  it("excludes the pairs of another lottery, skipping players gone", () => {
+    const players = makePlayers(["a", "b", "c", "d", "e"]);
+    const last = { a: "b", b: "c", c: "d", d: "e", e: "a", gone: "a" };
+    assert.equal(excludePairs(players, last), 5);
+    for (let seed = 0; seed < 20; ++seed) {
+      const lottery = drawLottery(players, {}, { random: seededRandom(seed) });
+      assertValid(players, lottery);
+      for (const [source, target] of Object.entries(last)) {
+        assert.notEqual(lottery[source], target, `${source} → ${target}`);
+      }
+    }
+  });
+});
+
 describe("draw with an existing lottery", () => {
   const six = ["A", "B", "C", "D", "E", "F"];
 
@@ -443,6 +460,15 @@ describe("createGlobMatcher", () => {
   it("excludes names matching a `!` pattern", () => {
     assert.deepEqual(select(["!alice*"]), ["bob", "tom & jerry"]);
     assert.deepEqual(select(["a*", "!alice"]), ["alice (junior)"]);
+  });
+});
+
+describe("unmatchedPatterns", () => {
+  it("lists include and `!` patterns matching no name", () => {
+    assert.deepEqual(
+      unmatchedPatterns(["a*", "frnak", "!bob", "!zed"], ["alice", "bob"]),
+      ["frnak", "!zed"],
+    );
   });
 });
 
@@ -583,5 +609,11 @@ describe("examples", () => {
       target: undefined,
     });
     assert.match(text, /- Grace\n/);
+
+    const sms = compileTextTemplate(read("announce.txt"));
+    assert.match(
+      sms({ player: all[0], players: all, target: undefined }),
+      /^Hi /,
+    );
   });
 });
