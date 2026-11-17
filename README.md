@@ -15,6 +15,8 @@ npm link # optional: puts `christmas-tombola` on the PATH, otherwise use ./cli.m
 
 Only needed to send: copy [`example-config.json5`](example-config.json5) to `~/.config/christmas-tombola/config.json5` and fill in the SMTP server and the SMS gateway.
 
+An SMTP server often accepts a wrong address and bounces the email later: watch the `from` mailbox after sending.
+
 SMS messages are sent through an Android phone running [SMS Gate](https://sms-gate.app) in Local Server mode, on the same network:
 
 - Disable battery optimization for the app (Samsung: _Unrestricted_), else the server stops when the screen is off.
@@ -23,8 +25,8 @@ SMS messages are sent through an Android phone running [SMS Gate](https://sms-ga
 
 ## First game
 
-1. `cp -r examples games/2026` (`games/` is git-ignored), then edit `games/2026/players.json5`.
-2. Optionally, announce the game: `christmas-tombola email games/2026 games/2026/announce.md`.
+1. `cp -r examples games/2026` (`games/` is git-ignored: back it up), then edit `games/2026/players.json5`.
+2. Optionally, announce the game: `christmas-tombola email games/2026 games/2026/announce.md`, and the same with `sms` and `announce.txt`.
 3. `christmas-tombola draw games/2026`.
 4. Check the messages with a dry run: `christmas-tombola email games/2026 games/2026/email.md`, and the same with `sms` and `sms.txt`.
 5. Send them: the same commands with `--force`; they end with the in-person players to tell and their targets.

@@ -609,5 +609,11 @@ describe("examples", () => {
       target: undefined,
     });
     assert.match(text, /- Grace\n/);
+
+    const sms = compileTextTemplate(read("announce.txt"));
+    assert.match(
+      sms({ player: all[0], players: all, target: undefined }),
+      /^Hi /,
+    );
   });
 });
