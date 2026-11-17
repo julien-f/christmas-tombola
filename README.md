@@ -11,27 +11,37 @@ npm ci
 npm link # optional: puts `christmas-tombola` on the PATH, otherwise use ./cli.mjs
 ```
 
-Configuration (SMTP, SMS gateway): copy [`example-config.json5`](example-config.json5) to `~/.config/christmas-tombola/config.json5`.
+## Configuration
 
-SMS are sent by an Android phone running [SMS Gate](https://sms-gate.app) in Local Server mode, on the same network:
+Only needed to send: copy [`example-config.json5`](example-config.json5) to `~/.config/christmas-tombola/config.json5` and fill in the SMTP server and the SMS gateway.
 
-- disable battery optimization for the app (Samsung: _Unrestricted_), else the server stops when the screen is off;
-- phone numbers in international format (`+33612345678`);
-- past 30 SMS in 30 minutes, Android asks on the phone to allow more: `sms --force` warns first;
-- a character outside the GSM alphabet (e.g. `ç`, `ê`, emoji) cuts each SMS from 160 to 70 characters: the dry run shows the estimated count.
+SMS messages are sent through an Android phone running [SMS Gate](https://sms-gate.app) in Local Server mode, on the same network:
 
-## Game directory
+- Disable battery optimization for the app (Samsung: _Unrestricted_), else the server stops when the screen is off.
+- Past 30 SMS in 30 minutes, Android asks for approval on the phone; `sms --force` warns beforehand.
+- A character outside the GSM alphabet (e.g. `ç`, `ê`, emoji) cuts each SMS from 160 to 70 characters: the dry run shows the estimated count.
 
-One directory per game, e.g. `games/2026/`:
+## First game
 
-- `players.json5`: the players, written by hand, see [`examples/players.json5`](examples/players.json5) (groups, same names, players told in person or left out);
-- `lottery.json`: the draw (giver id → receiver id), written by `draw`.
+1. `cp -r examples games/2026` (`games/` is git-ignored), then edit `games/2026/players.json5`.
+2. Optionally, announce the game: `christmas-tombola email games/2026 games/2026/announce.md`.
+3. `christmas-tombola draw games/2026`.
+4. Check the messages with a dry run: `christmas-tombola email games/2026 games/2026/email.md`, and the same with `sms` and `sms.txt`.
+5. Send them: the same commands with `--force`.
+6. After editing the players, `draw` again and send to the players it lists: `christmas-tombola email games/2026 games/2026/email.md 'alice' 'grace' --force`.
 
-To try it: `cp -r examples games/test`, then `christmas-tombola draw games/test`.
+## Players
 
-- `draw` refuses a player with neither `email` nor `phone`, unless `inPerson: true` (the organizer tells them).
+`players.json5`, written by hand, see [`examples/players.json5`](examples/players.json5):
+
+- Players nested in an array form a _group_ (e.g. a couple); groups can be nested.
+- Nobody draws themselves, a member of one of their groups, or the player who drew them.
+- `email` and `phone` (international format: `+33612345678`) are where the messages go; `draw` refuses a player with neither, unless `inPerson: true` (the organizer tells them).
+- `disambiguation` tells same names apart: the _displayed name_ becomes `Alice (junior)`.
 - `id` defaults to the displayed name; set it to rename a player without breaking `lottery.json`.
-- Nobody draws themselves, someone of their groups, or the player who draws them.
+- `participate: false` keeps a player in the file but out of the draw.
+
+`draw` writes the draw to `lottery.json` (player id → target id).
 
 ## Commands
 
@@ -43,20 +53,28 @@ christmas-tombola sms <game directory> <template> [<pattern>...]
 christmas-tombola sms-test <phone> [<message>]
 ```
 
+- `<template>` is a path from the current directory, e.g. `games/2026/email.md`.
+- Patterns (case-insensitive globs on displayed names) select players, `!` excludes: `'a*' '!alice'`.
 - Targets stay hidden, so the organizer can play too; `--show` reveals them (`draw`, `dump`, dry runs).
-- `draw` again after editing players: pairs of players who left or breaking new groups are redrawn, new players are inserted, and it lists who has a new target (send to them again).
-- `email` and `sms` only print the messages; `--force` (`-f`) sends them, unless a message fails to render: then nothing is sent. Failed players are listed with the command to retry them, and the exit code is 1.
+- Rerunning `draw` keeps existing pairs: it redraws only pairs that involve a removed player or break a new group, inserts new players, and lists the players whose target changed.
+- `dump` prints the players as read from `players.json5`, with their targets under `--show`.
+- `email` and `sms`:
+  - without `--force` (`-f`), do a _dry run_: print the messages, send nothing;
+  - skip players without `email` (resp. `phone`), with a warning;
+  - send nothing if any message fails to render;
+  - list the players whose sending failed with the command to retry them, and exit with code 1.
 - `sms-test` sends one SMS right away, to check the gateway configuration.
-- Patterns (case-insensitive globs on displayed names) select players: `'a*' '!alice'`.
-- Before the draw (no `lottery.json`), templates can announce the game without `target`.
 
 ## Templates
 
-[Handlebars](https://handlebarsjs.com/) with `player`, `target` (the player to give to) and `players` (all, sorted by name).
+[Handlebars](https://handlebarsjs.com/) with:
 
-A missing field is an error, not an empty string: put optional fields in `{{#if player.phone}}…{{/if}}`, and `target` in `{{#if target}}…{{/if}}` in templates also sent before the draw.
+- `player` and `target` (the player to give to): `name`, `displayName`, `id` and any field set in `players.json5`;
+- `players`: all of them, sorted by displayed name.
 
-- Email: Markdown body (sent as text and HTML), Nodemailer fields in a [TOML](https://toml.io/) front matter between `+++` lines; the recipient is always the player. See [`examples/email.md`](examples/email.md), and [`examples/announce.md`](examples/announce.md) for before the draw.
+A missing field is an error, not an empty string: put optional fields in `{{#if player.phone}}…{{/if}}`. Before the draw (no `lottery.json`), `target` is undefined: an announcement doesn't use it, and a template sent both before and after the draw wraps it in `{{#if target}}…{{/if}}`.
+
+- Email: Markdown body, sent as text and HTML. Nodemailer fields go in a [TOML](https://toml.io/) front matter between `+++` lines. The recipient is always the player. See [`examples/email.md`](examples/email.md), and [`examples/announce.md`](examples/announce.md) for before the draw.
 - SMS: plain text, see [`examples/sms.txt`](examples/sms.txt).
 
 ## License
