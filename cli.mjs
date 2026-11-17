@@ -2,11 +2,12 @@
 
 import { join } from "node:path";
 import { load as loadConfig } from "app-conf";
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import pkg from "./package.json" with { type: "json" };
 import { parseArgs } from "node:util";
 
 import {
+  CHANNEL_SUFFIXES,
   compileMailTemplate,
   compileTextTemplate,
   createGlobMatcher,
@@ -14,6 +15,7 @@ import {
   draw,
   excludePairs,
   hideTarget,
+  messageTemplates,
   namePattern,
   parsePlayers,
   shellQuote,
@@ -196,6 +198,12 @@ const COMMANDS = Object.freeze({
       Object.keys(lottery).length,
       lotteryPath(gameDir),
     );
+    if (notify.length !== 0) {
+      console.log(
+        "next: %s",
+        [pkg.name, "send", gameDir, "targets"].map(shellQuote).join(" "),
+      );
+    }
   },
 
   async dump(args) {
@@ -220,56 +228,8 @@ const COMMANDS = Object.freeze({
     );
   },
 
-  async email(args) {
-    await sendToPlayers(args, {
-      command: "email",
-      contact: "email",
-      compile: compileMailTemplate,
-      format: ({ subject, text }) => `Subject: ${subject}\n\n${text}`,
-      createSender: async () => {
-        const sendMail = await createMailer(
-          requireConfig(this.config, "email"),
-        ).catch((error) => {
-          // eslint-disable-next-line no-throw-literal
-          throw `SMTP server (\`email.transport\` in the configuration): ${error.message}`;
-        });
-        // Not from the template: a comma in a name would split it.
-        return (player, message) =>
-          sendMail(
-            { name: player.displayName, address: player.email },
-            message,
-          );
-      },
-    });
-  },
-
-  async sms(args) {
-    await sendToPlayers(args, {
-      command: "sms",
-      contact: "phone",
-      compile: compileTextTemplate,
-      format: (message) => {
-        const { count, nonGsm } = smsSegments(message);
-        return `${message}\n(~${count} SMS${
-          nonGsm === undefined ? "" : `, shorter because of "${nonGsm}"`
-        })`;
-      },
-      createSender: (messages) => {
-        const config = requireConfig(this.config, "sms");
-        const total = messages.reduce(
-          (sum, message) => sum + smsSegments(message).count,
-          0,
-        );
-        if (total > SMS_LIMIT) {
-          console.warn(
-            "%d SMS: past %d in 30 minutes, Android asks on the phone to allow more",
-            total,
-            SMS_LIMIT,
-          );
-        }
-        return (player, message) => sendSms(config, player.phone, message);
-      },
-    });
+  send(args) {
+    return send(this.config, args);
   },
 
   async "sms-test"(args) {
@@ -290,32 +250,123 @@ const COMMANDS = Object.freeze({
   },
 });
 
-// Renders the template for every selected player, then, if all succeed
-// and `--force`, sends them one at a time; otherwise prints them, with
-// targets hidden unless `--show`.
-async function sendToPlayers(
-  args,
-  { command, contact, compile, format, createSender },
-) {
+// How each channel reaches a player.
+const CHANNELS = {
+  email: {
+    label: "email",
+    contact: "email",
+    compile: compileMailTemplate,
+    format: ({ subject, text }) => `Subject: ${subject}\n\n${text}`,
+    // Returns `send(player, content)`, created before sending any to
+    // check the configuration.
+    async createSender(config) {
+      const sendMail = await createMailer(requireConfig(config, "email")).catch(
+        (error) => {
+          // eslint-disable-next-line no-throw-literal
+          throw `SMTP server (\`email.transport\` in the configuration): ${error.message}`;
+        },
+      );
+      // Not from the template: a comma in a name would split it.
+      return (player, content) =>
+        sendMail({ name: player.displayName, address: player.email }, content);
+    },
+  },
+  sms: {
+    label: "SMS",
+    contact: "phone",
+    compile: compileTextTemplate,
+    format: (content) => {
+      const { count, nonGsm } = smsSegments(content);
+      return `${content}\n(~${count} SMS${
+        nonGsm === undefined ? "" : `, shorter because of "${nonGsm}"`
+      })`;
+    },
+    createSender(config, contents) {
+      const smsConfig = requireConfig(config, "sms");
+      const total = contents.reduce(
+        (sum, content) => sum + smsSegments(content).count,
+        0,
+      );
+      if (total > SMS_LIMIT) {
+        console.warn(
+          "%d SMS: past %d in 30 minutes, Android asks on the phone to allow more",
+          total,
+          SMS_LIMIT,
+        );
+      }
+      return (player, content) => sendSms(smsConfig, player.phone, content);
+    },
+  },
+};
+
+// Why no channel reaches `player`, and how to fix it.
+function unreachableReason(player, message) {
+  const contacts = Object.keys(CHANNELS).filter(
+    (channel) => player[CHANNELS[channel].contact] !== undefined,
+  );
+  if (contacts.length === 0) {
+    return "neither email nor phone (set `inPerson: true` to tell them in person)";
+  }
+  return `no ${contacts
+    .map((channel) => message + CHANNEL_SUFFIXES[channel])
+    .join(" or ")} for their ${contacts
+    .map((channel) => CHANNELS[channel].contact)
+    .join(" and ")} (add it, or skip with ${shellQuote(
+    "!" + namePattern(player.displayName),
+  )})`;
+}
+
+// Renders the message for every selected player on each of their
+// channels, then, if all succeed and `--force`, sends them one at a
+// time; otherwise prints them, with targets hidden unless `--show`.
+async function send(config, args) {
   const {
     values: { force, show },
     positionals: [
       gameDir = requireArg("<game directory>"),
-      templateFile = requireArg("<template>"),
+      message = requireArg("<message>"),
       ...patterns
     ],
   } = parseCommandArgs(args);
 
-  const [{ players, lottery }, template] = await Promise.all([
+  const fileNames = await readdir(gameDir);
+  let files;
+  try {
+    files = messageTemplates(fileNames, message);
+  } catch (error) {
+    // The user's to fix, not a bug: no stack trace.
+    throw error.message;
+  }
+  const channels = Object.keys(files);
+  console.log(
+    "%s: %s",
+    message,
+    channels.length === Object.keys(CHANNELS).length
+      ? channels.map((channel) => CHANNELS[channel].label).join(" and ")
+      : `${CHANNELS[channels[0]].label} only (no ${Object.keys(CHANNELS)
+          .filter((channel) => !channels.includes(channel))
+          .map((channel) => message + CHANNEL_SUFFIXES[channel])
+          .join(", ")})`,
+  );
+
+  const [{ players, lottery }, templates] = await Promise.all([
     readGame(gameDir),
-    readFile(templateFile, "utf8").then(parseFile(templateFile, compile)),
+    Promise.all(
+      channels.map(async (channel) => {
+        const path = join(gameDir, files[channel]);
+        const template = await readFile(path, "utf8").then(
+          parseFile(path, CHANNELS[channel].compile),
+        );
+        return [channel, template];
+      }),
+    ).then(Object.fromEntries),
   ]);
 
   const isSelected = createPlayerMatcher(players, patterns, { force });
   const sortedPlayers = sortByDisplayName(players);
   const hiddenTarget = hideTarget(players);
-  const messages = [];
-  const failures = [];
+  const deliveries = [];
+  const failures = new Set();
   const inPerson = [];
   let selected = 0;
 
@@ -326,46 +377,54 @@ async function sendToPlayers(
     }
     ++selected;
 
-    if (player[contact] === undefined) {
+    const reachable = channels.filter(
+      (channel) => player[CHANNELS[channel].contact] !== undefined,
+    );
+    if (reachable.length === 0) {
       if (player.inPerson) {
         inPerson.push(player);
       } else {
-        console.warn("%s: no %s, skipped", name, contact);
+        console.error("%s: %s", name, unreachableReason(player, message));
+        failures.add(name);
       }
       continue;
     }
 
-    // Without a lottery, templates are announcements without targets.
+    // Without a lottery, messages are announcements without targets.
     let target;
     if (lottery !== undefined) {
       target = players[lottery[player.id]];
       if (target === undefined) {
         console.error("%s: no valid target in lottery.json, run draw", name);
-        failures.push(name);
+        failures.add(name);
         continue;
       }
     }
 
-    const render = (target) =>
-      template({ player, players: sortedPlayers, target });
-    try {
-      // Rendered with the real target even if hidden: it can fail where
-      // the hidden one would not.
-      let message = render(target);
-      if (target !== undefined && !force && !show) {
-        message = render(hiddenTarget);
+    for (const channel of reachable) {
+      const render = (target) =>
+        templates[channel]({ player, players: sortedPlayers, target });
+      try {
+        // Rendered with the real target even if hidden: it can fail where
+        // the hidden one would not.
+        let content = render(target);
+        if (target !== undefined && !force && !show) {
+          content = render(hiddenTarget);
+        }
+        deliveries.push({ player, channel, content });
+      } catch (error) {
+        // The details could tell which fields the target has.
+        console.error(
+          "%s: %s",
+          name,
+          show || target === undefined
+            ? `${files[channel]}: ${error.message}${
+                lottery === undefined ? " (before the draw, no target)" : ""
+              }`
+            : "template error, use --show for details",
+        );
+        failures.add(name);
       }
-      messages.push({ player, message });
-    } catch (error) {
-      // The details could tell which fields the target has.
-      console.error(
-        "%s: %s",
-        name,
-        show
-          ? `${templateFile}: ${error.message}`
-          : "template error, use --show for details",
-      );
-      failures.push(name);
     }
   }
 
@@ -374,32 +433,42 @@ async function sendToPlayers(
     throw "no player selected";
   }
 
-  if (force && failures.length !== 0) {
+  if (force && failures.size !== 0) {
     // eslint-disable-next-line no-throw-literal
     throw "nothing sent, fix the errors above";
   }
 
   if (force) {
-    // `send(player, message)`, created before sending any to check the
-    // configuration.
-    const send = await createSender(messages.map(({ message }) => message));
-    for (const { player, message } of messages) {
+    const senders = {};
+    for (const channel of channels) {
+      const contents = deliveries
+        .filter((delivery) => delivery.channel === channel)
+        .map((delivery) => delivery.content);
+      if (contents.length !== 0) {
+        senders[channel] = await CHANNELS[channel].createSender(
+          config,
+          contents,
+        );
+      }
+    }
+    for (const { player, channel, content } of deliveries) {
       const name = player.displayName;
       try {
-        await send(player, message);
-        console.log("%s: sent to %s", name, player[contact]);
+        await senders[channel](player, content);
+        console.log("%s: sent to %s", name, player[CHANNELS[channel].contact]);
       } catch (error) {
         console.error("%s: failed: %s", name, error.message);
-        failures.push(name);
+        failures.add(name);
       }
     }
   } else {
-    for (const { player, message } of messages) {
+    for (const { player, channel, content } of deliveries) {
       console.log(
-        "--- to %s (%s)\n%s\n",
+        "--- %s to %s (%s)\n%s\n",
+        CHANNELS[channel].label,
         player.displayName,
-        player[contact],
-        format(message),
+        player[CHANNELS[channel].contact],
+        CHANNELS[channel].format(content),
       );
     }
   }
@@ -418,13 +487,13 @@ async function sendToPlayers(
     );
   }
 
-  if (failures.length !== 0) {
-    console.error("failed for: %s", failures.join(", "));
+  if (failures.size !== 0) {
+    console.error("failed for: %s", [...failures].join(", "));
     if (force) {
       console.error(
         "to retry them: %s",
-        [pkg.name, command, gameDir, templateFile, "--force"]
-          .concat(failures.map(namePattern))
+        [pkg.name, "send", gameDir, message, "--force"]
+          .concat([...failures].map(namePattern))
           .map(shellQuote)
           .join(" "),
       );
@@ -443,14 +512,14 @@ Usage: ${pkg.name} <command> [options] <arguments>
 Commands:
   draw <game directory> [--avoid <previous game directory>...]
   dump <game directory> [<pattern>...]
-  email <game directory> <mail template> [<pattern>...]
-  sms <game directory> <sms template> [<pattern>...]
+  send <game directory> <message> [<pattern>...]
+      <message>.email.md and <message>.sms.txt in the game directory
   sms-test <phone> [<message>]
 
 Options:
   --avoid      draw: no pair of that game (e.g. last year's)
   --show       show targets (hidden by default)
-  -f, --force  email, sms: really send (only printed by default)
+  -f, --force  send: really send (only printed by default)
   -h, --help   show this help
 
 ${pkg.name} v${pkg.version}

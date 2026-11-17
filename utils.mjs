@@ -93,6 +93,55 @@ export function createGlobMatcher(patterns) {
     (include.length === 0 || matches(entry, include));
 }
 
+// Template file suffix of each channel.
+export const CHANNEL_SUFFIXES = Object.freeze({
+  email: ".email.md",
+  sms: ".sms.txt",
+});
+
+const TEMPLATE_FILE = /^(.+)\.(?:email\.md|sms\.txt)$/;
+
+// The template file of each channel of `message` among `fileNames` (a
+// directory listing). Throws if there is none, or if another file of
+// the message is there: likely a typo.
+export function messageTemplates(fileNames, message) {
+  const expected = Object.fromEntries(
+    Object.entries(CHANNEL_SUFFIXES).map(([channel, suffix]) => [
+      channel,
+      message + suffix,
+    ]),
+  );
+  const expectedText = Object.values(expected).join(" or ");
+
+  const unknown = fileNames.filter(
+    (name) =>
+      name.startsWith(message + ".") &&
+      !Object.values(expected).includes(name) &&
+      // Another message's, e.g. `targets.v2.sms.txt` for `targets`.
+      !TEMPLATE_FILE.test(name),
+  );
+  if (unknown.length !== 0) {
+    throw new Error(
+      `unexpected ${unknown.join(", ")}: name it ${expectedText}`,
+    );
+  }
+
+  const templates = Object.fromEntries(
+    Object.entries(expected).filter(([, name]) => fileNames.includes(name)),
+  );
+  if (Object.keys(templates).length === 0) {
+    const messages = [
+      ...new Set(fileNames.map((name) => TEMPLATE_FILE.exec(name)?.[1])),
+    ]
+      .filter(Boolean)
+      .sort();
+    throw new Error(
+      `no ${expectedText}; messages here: ${messages.join(", ") || "none"}`,
+    );
+  }
+  return templates;
+}
+
 // Patterns (with their `!`) matching none of `entries`: likely typos.
 export const unmatchedPatterns = (patterns, entries) =>
   patterns.filter((pattern) => {

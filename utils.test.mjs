@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
@@ -9,6 +9,7 @@ import {
   draw,
   excludePairs,
   hideTarget,
+  messageTemplates,
   parsePlayers,
   namePattern,
   shellQuote,
@@ -463,6 +464,40 @@ describe("createGlobMatcher", () => {
   });
 });
 
+describe("messageTemplates", () => {
+  const files = [
+    "players.json5",
+    "announce.email.md",
+    "targets.email.md",
+    "targets.sms.txt",
+    "targets.v2.sms.txt",
+  ];
+
+  it("finds the templates of each channel", () => {
+    assert.deepEqual(messageTemplates(files, "targets"), {
+      email: "targets.email.md",
+      sms: "targets.sms.txt",
+    });
+    assert.deepEqual(messageTemplates(files, "announce"), {
+      email: "announce.email.md",
+    });
+  });
+
+  it("rejects other files of the message, likely typos", () => {
+    assert.throws(
+      () => messageTemplates([...files, "targets.sms.text"], "targets"),
+      /targets\.sms\.text.*targets\.email\.md or targets\.sms\.txt/,
+    );
+  });
+
+  it("lists the messages when none matches", () => {
+    assert.throws(
+      () => messageTemplates(files, "target"),
+      /no target\.email\.md or target\.sms\.txt; messages here: announce, targets, targets\.v2/,
+    );
+  });
+});
+
 describe("unmatchedPatterns", () => {
   it("lists include and `!` patterns matching no name", () => {
     assert.deepEqual(
@@ -580,6 +615,16 @@ describe("examples", () => {
   const players = parsePlayers(read("players.json5"));
   const all = Object.values(players);
 
+  it("has email and SMS templates for each message", () => {
+    const files = readdirSync(new URL("examples/", import.meta.url));
+    for (const message of ["announce", "targets"]) {
+      assert.deepEqual(Object.keys(messageTemplates(files, message)), [
+        "email",
+        "sms",
+      ]);
+    }
+  });
+
   it("can be drawn", () => {
     assert.deepEqual(unreachablePlayers(players), []);
     assertValid(players, drawLottery(players, {}, { random: seededRandom(0) }));
@@ -587,8 +632,8 @@ describe("examples", () => {
 
   it("renders the templates for every player", () => {
     const lottery = drawLottery(players, {}, { random: seededRandom(0) });
-    const email = compileMailTemplate(read("email.md"));
-    const sms = compileTextTemplate(read("sms.txt"));
+    const email = compileMailTemplate(read("targets.email.md"));
+    const sms = compileTextTemplate(read("targets.sms.txt"));
     for (const player of all) {
       const context = {
         player,
@@ -602,7 +647,7 @@ describe("examples", () => {
   });
 
   it("announces the game before the draw", () => {
-    const announce = compileMailTemplate(read("announce.md"));
+    const announce = compileMailTemplate(read("announce.email.md"));
     const { text } = announce({
       player: all[0],
       players: all,
@@ -610,7 +655,7 @@ describe("examples", () => {
     });
     assert.match(text, /- Grace\n/);
 
-    const sms = compileTextTemplate(read("announce.txt"));
+    const sms = compileTextTemplate(read("announce.sms.txt"));
     assert.match(
       sms({ player: all[0], players: all, target: undefined }),
       /^Hi /,
