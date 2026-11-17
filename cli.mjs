@@ -51,7 +51,7 @@ const COMMANDS = Object.freeze({
       console.log(
         "%s → %s",
         players[sourceId].displayName,
-        players[targetId].displayName
+        players[targetId].displayName,
       );
     });
 
@@ -117,22 +117,22 @@ const COMMANDS = Object.freeze({
               players: sortedPlayers,
               target: lottery && players[lottery[player.id]],
             }),
-            forceFlag
+            forceFlag,
           );
           console.log(
             "email sent to %s (%s)",
             player.displayName,
-            player.email
+            player.email,
           );
         } catch (error) {
           console.log(
             "failed sending email to %s (%s)",
             player.displayName,
             player.email,
-            error
+            error,
           );
         }
-      })
+      }),
     );
   },
 
@@ -158,7 +158,7 @@ const COMMANDS = Object.freeze({
     ]);
 
     const isPlayerEnabled = createGlobMatcher(
-      patterns.map((_) => _.toLowerCase())
+      patterns.map((_) => _.toLowerCase()),
     );
 
     const sortedPlayers = orderBy(players, "displayName");
@@ -183,19 +183,19 @@ const COMMANDS = Object.freeze({
         if (force) {
           return sendSms(this.config.sms, player.phone, message).then(
             console.log,
-            console.error
+            console.error,
           );
         }
 
         console.log(
           "would have sent the following message to %s (%s)",
           player.displayName,
-          player.phone
+          player.phone,
         );
         console.log("---");
         console.log(message);
         console.log("---");
-      })
+      }),
     );
   },
 });
@@ -203,7 +203,7 @@ const COMMANDS = Object.freeze({
 // -------------------------------------------------------------------
 
 const { name: pkgName, version: pkgVersion } = JSON.parse(
-  readFileSync(new URL("package.json", import.meta.url))
+  readFileSync(new URL("package.json", import.meta.url)),
 );
 
 const help = `
@@ -230,7 +230,7 @@ execPromise(async (args) => {
   if (!commandName) {
     // eslint-disable-next-line no-throw-literal
     throw `missing <command> (should be one of ${Object.keys(COMMANDS).join(
-      ", "
+      ", ",
     )})`;
   }
 
@@ -238,7 +238,7 @@ execPromise(async (args) => {
   if (!command) {
     // eslint-disable-next-line no-throw-literal
     throw `invalid <command>: ${commandName} (should be one of ${Object.keys(
-      COMMANDS
+      COMMANDS,
     ).join(", ")})`;
   }
 
@@ -248,6 +248,6 @@ execPromise(async (args) => {
         appDir: new URL(".", import.meta.url).pathname,
       }),
     },
-    commandArgs
+    commandArgs,
   );
 });

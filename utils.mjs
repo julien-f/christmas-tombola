@@ -188,7 +188,7 @@ export function map(
   collection,
   iteratee,
   thisArg,
-  target = "length" in collection ? [] : {}
+  target = "length" in collection ? [] : {},
 ) {
   forEach(collection, (item, i) => {
     const value = iteratee.call(thisArg, item, i, collection, DONE);
