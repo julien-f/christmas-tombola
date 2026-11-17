@@ -27,7 +27,7 @@ SMS messages are sent through an Android phone running [SMS Gate](https://sms-ga
 2. Optionally, announce the game: `christmas-tombola email games/2026 games/2026/announce.md`.
 3. `christmas-tombola draw games/2026`.
 4. Check the messages with a dry run: `christmas-tombola email games/2026 games/2026/email.md`, and the same with `sms` and `sms.txt`.
-5. Send them: the same commands with `--force`.
+5. Send them: the same commands with `--force`; they end with the in-person players to tell and their targets.
 6. After editing the players, `draw` again and send to the players it lists: `christmas-tombola email games/2026 games/2026/email.md 'alice' 'grace' --force`.
 
 ## Players
@@ -47,7 +47,7 @@ SMS messages are sent through an Android phone running [SMS Gate](https://sms-ga
 
 ```sh
 christmas-tombola draw <game directory>
-christmas-tombola dump <game directory>
+christmas-tombola dump <game directory> [<pattern>...]
 christmas-tombola email <game directory> <template> [<pattern>...]
 christmas-tombola sms <game directory> <template> [<pattern>...]
 christmas-tombola sms-test <phone> [<message>]
@@ -57,10 +57,10 @@ christmas-tombola sms-test <phone> [<message>]
 - Patterns (case-insensitive globs on displayed names) select players, `!` excludes: `'a*' '!alice'`.
 - Targets stay hidden, so the organizer can play too; `--show` reveals them (`draw`, `dump`, dry runs).
 - Rerunning `draw` keeps existing pairs: it redraws only pairs that involve a removed player or break a new group, inserts new players, and lists the players whose target changed.
-- `dump` prints the players as read from `players.json5`, with their targets under `--show`.
+- `dump` prints the players as read from `players.json5`, with their targets under `--show`: `dump games/2026 heidi --show` shows only Heidi's.
 - `email` and `sms`:
   - without `--force` (`-f`), do a _dry run_: print the messages, send nothing;
-  - skip players without `email` (resp. `phone`), with a warning;
+  - skip players without `email` (resp. `phone`), with a warning, or listed as to tell in person if `inPerson`, with their targets when sending or under `--show`;
   - send nothing if any message fails to render;
   - list the players whose sending failed with the command to retry them, and exit with code 1.
 - `sms-test` sends one SMS right away, to check the gateway configuration.
